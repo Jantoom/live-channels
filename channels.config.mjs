@@ -20,11 +20,12 @@ export const config = {
   // A region with fewer channels than this fails the build, so a bad fetch can't
   // replace the last good deployment with a near-empty list.
   minChannelsPerRegion: 20,
-  // Check each stream's host for browser playback and mark the ones Stremio Web
-  // has to play through the streaming server (see toStream in src/lib.mjs).
-  probeWebPlayback: true,
-  // Hosts that only sometimes allow browser playback, so a single check can't be
-  // trusted. Streams that pass through them always use the streaming server on
-  // Stremio Web. Google's ad insertion (10's channels) drops the header on some requests.
-  notWebReadyHosts: ["dai.google.com"],
+  // Stream hosts that don't (reliably) let a web page play their streams. Streams
+  // that redirect through one are marked so Stremio Web plays them through the
+  // streaming server (see toStream in src/lib.mjs). Checked from Australia, Nov 2026.
+  notWebReadyHosts: [
+    "dai.google.com",                    // 10's channels and Bloomberg: Google ad insertion, header missing on some requests
+    "live-ak.vimeocdn.com",              // GOOD.: only allows vimeo.com
+    "stream.aboriginalbroadcasting.org", // First Nations TV, Tourism TV: no header at all
+  ],
 };

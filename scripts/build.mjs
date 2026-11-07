@@ -96,31 +96,28 @@ export async function build({
     }
   });
 
-  // Follows the stream's redirects the way a browser on web.stremio.com would:
-  // every response, redirects included, has to allow the page's origin, and
-  // after the first redirect to another site that origin becomes "null".
+  // i.mjh.nz links redirect to the broadcaster's host. Follow the redirects and
+  // check the hosts against config.notWebReadyHosts. The responses themselves
+  // aren't judged: the build runs outside Australia, where geo-blocked hosts
+  // answer differently from how they answer a viewer here.
   async function isWebReady(url) {
-    try {
-      let origin = "https://web.stremio.com", current = new URL(url);
-      for (let hop = 0; hop < 6; hop++) {
-        if (config.notWebReadyHosts?.includes(current.host)) return false;
-        const res = await fetchImpl(current, { redirect: "manual", headers: { Origin: origin } });
+    let current = new URL(url);
+    for (let hop = 0; hop < 6; hop++) {
+      if (config.notWebReadyHosts.includes(current.host)) return false;
+      try {
+        const res = await fetchImpl(current, { redirect: "manual" });
         await res.body?.cancel?.();
-        const allowed = res.headers.get("access-control-allow-origin");
-        if (allowed !== "*" && allowed !== origin) return false;
         const location = res.headers.get("location");
-        if (!location) return res.ok;
-        const next = new URL(location, current);
-        if (next.origin !== current.origin) origin = "null";
-        current = next;
+        if (!location) return true;
+        current = new URL(location, current);
+      } catch {
+        return true; // unknown; assume it plays
       }
-      return false;
-    } catch {
-      return false;
     }
+    return true;
   }
   const webReady = new Map();
-  if (config.probeWebPlayback) {
+  if (config.notWebReadyHosts?.length) {
     await mapLimit(all, 8, async ({ ch }) => webReady.set(ch.key, await isWebReady(ch.mjh_master)));
   }
 
@@ -159,7 +156,7 @@ export async function build({
   Object.assign(report, {
     channels: channels.size,
     posters: posters.size,
-    notWebReady: config.probeWebPlayback ? [...webReady].filter(([, ok]) => !ok).map(([key]) => key) : "not checked",
+    notWebReady: [...webReady].filter(([, ok]) => !ok).map(([key]) => key),
     historyPrograms: Object.values(history).reduce((n, e) => n + e.length, 0),
     warnings,
   });

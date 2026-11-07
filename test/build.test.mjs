@@ -10,7 +10,7 @@ import { build } from "../scripts/build.mjs";
 
 const NOW = 2_000_000_000;
 const countries = [{ id: "au", name: "Australia", source: "https://fake.test/au", regions: ["Brisbane", "Sydney"] }];
-const config = { exclude: [], minChannelsPerRegion: 2, probeWebPlayback: true, notWebReadyHosts: ["flaky.test"] };
+const config = { exclude: [], minChannelsPerRegion: 2, notWebReadyHosts: ["dai.test", "flaky.test"] };
 
 const national = {
   "mjh-abc": {
@@ -40,17 +40,16 @@ const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (i
   if (url.endsWith("/history.json")) return history ? json(history) : notFound;
   if (url === "https://logos.test/abc.png") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => wideLogo };
   if (url.startsWith("https://logos.test/")) return notFound;
-  // Streams: 10 redirects to an ad server whose own redirect leaves out the CORS
-  // header (its final playlist allows the null origin, which isn't enough); the
-  // rest allow any origin.
-  const redirect = (location, h = {}) => ({ ok: false, status: 302, headers: headers({ location, ...h }) });
-  if (url === "https://i.mjh.nz/.r/10-qld.m3u8") return redirect("https://dai.test/master.m3u8", { "access-control-allow-origin": "*" });
-  if (url === "https://dai.test/master.m3u8") return redirect("/stream.m3u8");
-  if (url === "https://dai.test/stream.m3u8") return { ok: true, status: 200, headers: headers({ "access-control-allow-origin": "null" }) };
-  // Passes when checked, but its host is listed as unreliable.
-  if (url === "https://i.mjh.nz/.r/flaky.m3u8") return redirect("https://flaky.test/master.m3u8", { "access-control-allow-origin": "*" });
-  if (url.startsWith("https://flaky.test/")) return { ok: true, status: 200, headers: headers({ "access-control-allow-origin": "*" }) };
-  if (url.startsWith("https://i.mjh.nz/.r/")) return { ok: true, status: 200, headers: headers({ "access-control-allow-origin": "*" }) };
+  // Streams: 10 redirects straight to a listed host; Flaky reaches one on its
+  // second redirect; Seven's host refuses (as geo-blocked hosts do from abroad)
+  // but isn't listed, so it still counts as playable.
+  const redirect = (location) => ({ ok: false, status: 302, headers: headers({ location }) });
+  if (url === "https://i.mjh.nz/.r/10-qld.m3u8") return redirect("https://dai.test/master.m3u8");
+  if (url === "https://i.mjh.nz/.r/flaky.m3u8") return redirect("https://cdn.test/hop.m3u8");
+  if (url === "https://cdn.test/hop.m3u8") return redirect("https://flaky.test/master.m3u8");
+  if (url === "https://i.mjh.nz/.r/seven-syd.m3u8") return redirect("https://geo.test/master.m3u8");
+  if (url.startsWith("https://geo.test/")) return { ok: false, status: 403, headers: headers() };
+  if (url.startsWith("https://i.mjh.nz/.r/")) return { ok: true, status: 200, headers: headers() };
   return notFound;
 };
 
@@ -107,7 +106,7 @@ test("a missing history only warns", async () => {
   assert.match((await read(outDir, "meta/channel/livetv-au-mjh-abc.json")).meta.description, /Recently aired: Gardening Australia/);
 });
 
-test("streams whose host refuses other sites are marked for the streaming server", async () => {
+test("streams that pass through a listed host are marked for the streaming server", async () => {
   const { outDir, report } = await run();
   assert.deepEqual((await read(outDir, "stream/channel/livetv-au-mjh-10-qld.json")).streams[0].behaviorHints, { notWebReady: true });
   assert.equal((await read(outDir, "stream/channel/livetv-au-mjh-abc.json")).streams[0].behaviorHints, undefined);

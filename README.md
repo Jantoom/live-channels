@@ -24,7 +24,7 @@ The schedule in i.mjh.nz's data only covers about the last 4 and next 9 hours. S
 
 - **Australia only.** The broadcasters geo-block their streams, so channels only play from an Australian connection (not overseas or through a foreign VPN).
 - **One source.** If i.mjh.nz is down or a broadcaster changes its app, those channels stop playing until it's fixed upstream. The build only republishes the list. It can't test playback, because GitHub's build servers are outside Australia.
-- **Stremio Web and 10's channels.** 10's streams (and a few others) come from hosts that don't reliably allow playback inside a web page. The build marks those streams so Stremio Web plays them through Stremio's streaming server, which you need running on your computer. The desktop and mobile apps play everything directly. `report.json` lists the marked channels under `notWebReady`.
+- **Stremio Web and 10's channels.** 10's streams and a few others (listed in `notWebReadyHosts` in `channels.config.mjs`) come from hosts that don't reliably allow playback inside a web page. The build marks those streams so Stremio Web plays them through Stremio's streaming server, which you need running on your computer. The desktop and mobile apps play everything directly. `report.json` lists the marked channels under `notWebReady`.
 - **No "now playing".** The addon is static files, so it can't show the programme on right now.
 - **The city filter is required.** Stremio only shows catalogs with a required filter in Discover, not as a home-screen row. That's deliberate: without it, older Stremio versions show a "None" option that would mix every city's local channels together.
 
