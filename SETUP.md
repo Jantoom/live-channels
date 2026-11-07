@@ -30,6 +30,6 @@ The first push to `main` may already have started a run on its own. That's fine;
 
 ## Afterwards
 
-- The workflow runs by itself every day at 4:17am Brisbane time to pick up channel changes. It also runs whenever you push a change to the config or code.
+- The workflow runs by itself every 6 hours to pick up channel changes and build up the "Recently aired" history. It also runs whenever you push a change to the config or code.
 - **If a run fails** (red cross), click it, then click the failed step to see why. The usual cause is i.mjh.nz being briefly unreachable. Your installed addon keeps working because a failed build never replaces the last good one. Re-run it later with **Re-run jobs**.
 - GitHub pauses scheduled workflows on a repo with no activity for 60 days and emails you first. Re-enable it from the Actions tab, or push any small change.

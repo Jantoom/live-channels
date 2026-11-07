@@ -2,11 +2,13 @@ name: Build and deploy channels
 
 on:
   schedule:
-    - cron: "17 18 * * *"   # daily at 18:17 UTC (4:17am Brisbane)
+    # Every 6 hours. Each build sees about 13 hours of schedule, so consecutive
+    # runs overlap and the "Recently aired" history has no gaps.
+    - cron: "17 */6 * * *"
   workflow_dispatch:         # "Run workflow" button in the Actions tab
   push:
     branches: [main]
-    paths: ["channels.config.mjs", "src/**", "scripts/**", ".github/workflows/**"]
+    paths: ["channels.config.mjs", "src/**", "scripts/**", ".github/workflows/**", "package-lock.json"]
 
 permissions:
   contents: read
@@ -29,6 +31,15 @@ jobs:
 
       - id: pages
         uses: actions/configure-pages@v5
+
+      - run: npm ci
+
+      # Rendered posters are kept between runs so only new logos are fetched.
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: posters-${{ github.run_id }}
+          restore-keys: posters-
 
       - name: Test
         run: npm test

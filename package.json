@@ -4,10 +4,15 @@
   "private": true,
   "description": "Static Stremio addon of free live TV channels by country and city, built from i.mjh.nz.",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
     "serve": "node scripts/serve.mjs"
+  },
+  "dependencies": {
+    "sharp": "^0.35.5"
   }
 }

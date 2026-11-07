@@ -20,4 +20,11 @@ export const config = {
   // A region with fewer channels than this fails the build, so a bad fetch can't
   // replace the last good deployment with a near-empty list.
   minChannelsPerRegion: 20,
+  // Check each stream's host for browser playback and mark the ones Stremio Web
+  // has to play through the streaming server (see toStream in src/lib.mjs).
+  probeWebPlayback: true,
+  // Hosts that only sometimes allow browser playback, so a single check can't be
+  // trusted. Streams that pass through them always use the streaming server on
+  // Stremio Web. Google's ad insertion (10's channels) drops the header on some requests.
+  notWebReadyHosts: ["dai.google.com"],
 };
