@@ -88,16 +88,17 @@ test("toMeta keeps i.mjh.nz's own description and leaves out what's missing", ()
   assert.equal(bare.poster, undefined);
 });
 
-test("streams say which regions carry the channel and flag browser-blocked hosts", () => {
+test("streams say which regions carry the channel; proxied ones carry i.mjh.nz's headers", () => {
   const all = ["Brisbane", "Sydney"];
   assert.equal(availability(all, all), "All regions");
   assert.equal(availability(["Sydney"], all), "Sydney");
-  const ch = { name: "Seven", mjh_master: "https://i.mjh.nz/.r/seven.m3u8" };
+  const ch = { name: "10", mjh_master: "https://i.mjh.nz/.r/10.m3u8", headers: { referer: " ", "user-agent": "otg/1.5.1" } };
   const s = toStream(ch, ["Sydney"], all);
-  assert.equal(s.url, "https://i.mjh.nz/.r/seven.m3u8");
-  assert.equal(s.title, "Seven\nSydney");
+  assert.equal(s.url, "https://i.mjh.nz/.r/10.m3u8");
+  assert.equal(s.title, "10\nSydney");
   assert.equal(s.behaviorHints, undefined);
-  assert.deepEqual(toStream(ch, all, all, { webReady: false }).behaviorHints, { notWebReady: true });
+  assert.deepEqual(toStream(ch, all, all, { proxy: true }).behaviorHints,
+    { notWebReady: true, proxyHeaders: { request: { "user-agent": "otg/1.5.1" } } }, "blank headers are left out");
 });
 
 test("catalogPaths covers encodings and the no-region default", () => {

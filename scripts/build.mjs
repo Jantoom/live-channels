@@ -95,28 +95,28 @@ export async function build({
   });
 
   // i.mjh.nz links redirect to the broadcaster's host. Follow the redirects and
-  // check the hosts against config.notWebReadyHosts. The responses themselves
-  // aren't judged: the build runs outside Australia, where geo-blocked hosts
-  // answer differently from how they answer a viewer here.
-  async function isWebReady(url) {
+  // check the hosts against config.proxyHosts. The responses themselves aren't
+  // judged: the build runs outside Australia, where geo-blocked hosts answer
+  // differently from how they answer a viewer here.
+  async function needsProxy(url) {
     let current = new URL(url);
     for (let hop = 0; hop < 6; hop++) {
-      if (config.notWebReadyHosts.includes(current.host)) return false;
+      if (config.proxyHosts.includes(current.host)) return true;
       try {
         const res = await fetchImpl(current, { redirect: "manual" });
         await res.body?.cancel?.();
         const location = res.headers.get("location");
-        if (!location) return true;
+        if (!location) return false;
         current = new URL(location, current);
       } catch {
-        return true; // unknown; assume it plays
+        return false; // unknown; assume it plays directly
       }
     }
-    return true;
+    return false;
   }
-  const webReady = new Map();
-  if (config.notWebReadyHosts?.length) {
-    await mapLimit(all, 8, async ({ ch }) => webReady.set(ch.key, await isWebReady(ch.mjh_master)));
+  const proxied = new Map();
+  if (config.proxyHosts?.length) {
+    await mapLimit(all, 8, async ({ ch }) => proxied.set(ch.key, await needsProxy(ch.mjh_master)));
   }
 
   // ---- 4. Write the static addon --------------------------------------------
@@ -138,7 +138,7 @@ export async function build({
     entries.push({ ch, country, regions, place, meta, home: country.regions.indexOf(regions[0]) });
     await writeJson(`meta/${TYPE}/${id}.json`, { meta });
     await writeJson(`stream/${TYPE}/${id}.json`, {
-      streams: [toStream(ch, regions, country.regions, { webReady: webReady.get(ch.key) ?? true })],
+      streams: [toStream(ch, regions, country.regions, { proxy: proxied.get(ch.key) ?? false })],
     });
     files += 2;
   }
@@ -169,7 +169,7 @@ export async function build({
   Object.assign(report, {
     channels: channels.size,
     posters: posters.size,
-    notWebReady: [...webReady].filter(([, ok]) => !ok).map(([key]) => key),
+    proxied: [...proxied].filter(([, yes]) => yes).map(([key]) => key),
     historyPrograms: Object.values(history).reduce((n, e) => n + e.length, 0),
     warnings,
   });

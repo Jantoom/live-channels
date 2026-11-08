@@ -11,7 +11,7 @@ import { build } from "../scripts/build.mjs";
 const NOW = 2_000_000_000;
 const countries = [{ id: "au", name: "Australia", source: "https://fake.test/au", regions: ["Brisbane", "Sydney"] }];
 const config = {
-  exclude: [], minChannelsPerRegion: 2, notWebReadyHosts: ["dai.test", "flaky.test"],
+  exclude: [], minChannelsPerRegion: 2, proxyHosts: ["dai.test", "flaky.test"],
   filterLabels: { all: "City", other: "Other" },
 };
 
@@ -22,7 +22,13 @@ const national = {
   },
 };
 const data = {
-  Brisbane: { ...national, "mjh-10-qld": { name: "10", network: "Ten", chno: 10, logo: "https://logos.test/broken.png", mjh_master: "https://i.mjh.nz/.r/10-qld.m3u8" } },
+  Brisbane: {
+    ...national,
+    "mjh-10-qld": {
+      name: "10", network: "Ten", chno: 10, logo: "https://logos.test/broken.png", mjh_master: "https://i.mjh.nz/.r/10-qld.m3u8",
+      headers: { referer: " ", "user-agent": "otg/1.5.1" },
+    },
+  },
   Sydney: {
     ...national,
     "mjh-seven-syd": { name: "Seven", network: "Seven", chno: 71, mjh_master: "https://i.mjh.nz/.r/seven-syd.m3u8" },
@@ -45,7 +51,7 @@ const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (i
   if (url.startsWith("https://logos.test/")) return notFound;
   // Streams: 10 redirects straight to a listed host; Flaky reaches one on its
   // second redirect; Seven's host refuses (as geo-blocked hosts do from abroad)
-  // but isn't listed, so it still counts as playable.
+  // but isn't listed, so it still plays directly.
   const redirect = (location) => ({ ok: false, status: 302, headers: headers({ location }) });
   if (url === "https://i.mjh.nz/.r/10-qld.m3u8") return redirect("https://dai.test/master.m3u8");
   if (url === "https://i.mjh.nz/.r/flaky.m3u8") return redirect("https://cdn.test/hop.m3u8");
@@ -114,11 +120,12 @@ test("a missing history only warns", async () => {
   assert.match((await read(outDir, "meta/channel/livetv-au-mjh-abc.json")).meta.description, /Recently aired: Gardening Australia/);
 });
 
-test("streams that pass through a listed host are marked for the streaming server", async () => {
+test("streams that pass through a listed host play via the proxy with i.mjh.nz's headers", async () => {
   const { outDir, report } = await run();
-  assert.deepEqual((await read(outDir, "stream/channel/livetv-au-mjh-10-qld.json")).streams[0].behaviorHints, { notWebReady: true });
+  assert.deepEqual((await read(outDir, "stream/channel/livetv-au-mjh-10-qld.json")).streams[0].behaviorHints,
+    { notWebReady: true, proxyHeaders: { request: { "user-agent": "otg/1.5.1" } } });
   assert.equal((await read(outDir, "stream/channel/livetv-au-mjh-abc.json")).streams[0].behaviorHints, undefined);
-  assert.deepEqual(report.notWebReady.sort(), ["mjh-10-qld", "mjh-flaky"]);
+  assert.deepEqual(report.proxied.sort(), ["mjh-10-qld", "mjh-flaky"]);
 });
 
 test("refuses to publish when a region comes back short", async () => {

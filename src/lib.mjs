@@ -156,17 +156,21 @@ export function availability(regions, allRegions) {
 }
 
 /**
- * webReady is false when the stream's host refuses browser playback from another
- * site (10's Google ad-insertion streams). notWebReady then makes Stremio Web
- * play it through the streaming server instead of failing with "Video is not
- * supported". The desktop and mobile apps play these streams directly either way.
+ * proxy is true when the stream passes through a host that needs i.mjh.nz's
+ * published player headers (ch.headers). 10's key server answers "not found" to
+ * Stremio's own player, which then plays a few seconds and quits. proxyHeaders
+ * makes Stremio play the stream through its streaming server's proxy. The proxy
+ * rewrites the playlists so every request, keys included, carries those
+ * headers, which also gets around hosts that block web playback. notWebReady
+ * tells Stremio Web it needs a streaming server for this one.
  */
-export function toStream(ch, regions, allRegions, { webReady = true } = {}) {
+export function toStream(ch, regions, allRegions, { proxy = false } = {}) {
+  const request = Object.fromEntries(Object.entries(ch.headers || {}).filter(([, v]) => String(v).trim()));
   return {
     name: "Live",
     title: `${ch.name}\n${availability(regions, allRegions)}`,
     url: ch.mjh_master,
-    ...(webReady ? {} : { behaviorHints: { notWebReady: true } }),
+    ...(proxy ? { behaviorHints: { notWebReady: true, proxyHeaders: { request } } } : {}),
   };
 }
 
@@ -193,7 +197,7 @@ export function catalogPaths(countryId, option, isDefault) {
 }
 
 // Bump when the manifest changes so installed copies refresh.
-export function buildManifest(countries, labels, version = "1.2.0") {
+export function buildManifest(countries, labels, version = "1.3.0") {
   return {
     id: "community.live-channels",
     version,
