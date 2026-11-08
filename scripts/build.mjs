@@ -8,10 +8,11 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { countries as defaultCountries, config as defaultConfig, services as defaultServices } from "../channels.config.mjs";
 import {
-  ADDON_NAME, TYPE, availability, buildManifest, catalogOrder, catalogPaths, filterOptions, groupOptions, isOther,
+  TYPE, availability, buildManifest, catalogOrder, catalogPaths, filterOptions, groupOptions, isOther,
   mergeHistory, metaId, placeChannel, recentlyAired, regionChannels, serviceChannels, toMeta, toStream, tvChannels,
 } from "../src/lib.mjs";
 import { makePoster } from "../src/posters.mjs";
+import { installPage } from "../src/install-page.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -190,10 +191,12 @@ export async function build({
     catalogs.push({ id: country.id, name: country.name, options });
   }
 
-  await writeJson("manifest.json", buildManifest(catalogs));
+  const manifest = buildManifest(catalogs);
+  await writeJson("manifest.json", manifest);
   await writeJson("history.json", history);
   await writeFile(join(outDir, ".nojekyll"), "");
-  await writeFile(join(outDir, "index.html"), installPage(base));
+  const perCountry = countries.map((c) => ({ country: c, count: entries.filter((e) => e.country === c).length }));
+  await writeFile(join(outDir, "index.html"), sitePage(base, manifest, perCountry, channels.size));
   Object.assign(report, {
     channels: channels.size,
     posters: posters.size,
@@ -211,23 +214,27 @@ async function mapLimit(items, limit, fn) {
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
 }
 
-function installPage(base) {
-  const manifest = `${base}/manifest.json`;
-  const stremio = manifest.replace(/^https?:\/\//, "stremio://");
-  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${ADDON_NAME}</title><style>
-:root{color-scheme:light dark;--bg:#fff;--fg:#1a1a1a;--muted:#666;--accent:#7b5bf2}
-@media (prefers-color-scheme:dark){:root{--bg:#111;--fg:#eee;--muted:#999}}
-body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.5 system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;padding:16px;box-sizing:border-box}
-main{max-width:520px}h1{margin:0 0 8px}p{color:var(--muted)}
-a.btn{display:inline-block;background:var(--accent);color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px}
-code{word-break:break-all;font-size:14px}</style></head><body><main>
-<h1>${ADDON_NAME}</h1>
-<p>Free live TV channels for Stremio, by country. Find them under Discover → channels, then pick a country and a city or genre from the dropdown.</p>
-<p><a class="btn" href="${stremio}">Install in Stremio</a><a href="report.json">Build report</a></p>
-<p>Or paste this into Stremio's addon search:<br><code>${manifest}</code></p>
-<p>Streams come from broadcasters' and free streaming services' own apps via <a href="https://i.mjh.nz/">i.mjh.nz</a>. Australian and New Zealand broadcasters' channels only play from inside that country.</p>
-</main></body></html>`;
+function sitePage(base, manifest, perCountry, total) {
+  return installPage({
+    name: manifest.name,
+    version: manifest.version,
+    icon: "tv",
+    tagline: "Free live TV channels for Stremio, by country.",
+    manifestUrl: `${base}/manifest.json`,
+    stats: [
+      { value: perCountry.length, label: "countries" },
+      { value: total, label: "channels" },
+    ],
+    groups: [{
+      title: "Countries",
+      detail: `${total.toLocaleString("en-US")} channels`,
+      layout: "grid",
+      choices: perCountry.map(({ country, count }) => ({ badge: country.id.toUpperCase(), label: country.name, detail: count.toLocaleString("en-US") })),
+    }],
+    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown, then a city or genre. Australia opens on every channel, and you can narrow it to your city.</p>
+<p>Streams come from broadcasters' and free streaming services' own apps via <a href="https://i.mjh.nz/">i.mjh.nz</a>. Australian and New Zealand broadcasters' channels only play from inside that country.</p>`,
+    links: [{ label: "Build report", href: "report.json" }],
+  });
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
