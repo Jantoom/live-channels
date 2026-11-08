@@ -8,8 +8,8 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { countries as defaultCountries, config as defaultConfig } from "../channels.config.mjs";
 import {
-  ADDON_NAME, TYPE, buildManifest, catalogPaths, mergeHistory, metaId, recentlyAired, regionChannels,
-  toMeta, toStream,
+  ADDON_NAME, TYPE, buildManifest, catalogOrder, catalogPaths, filterOptions, mergeHistory, metaId, placeChannel,
+  recentlyAired, regionChannels, toMeta, toStream,
 } from "../src/lib.mjs";
 import { makePoster } from "../src/posters.mjs";
 
@@ -48,7 +48,6 @@ export async function build({
   // channels: id -> { ch, country, regions[] }, so a national channel that
   // appears in every city gets one meta and one stream file.
   const channels = new Map();
-  const catalogs = [];
   const report = { builtAt: new Date(now * 1000).toISOString(), countries: {} };
 
   for (const country of countries) {
@@ -64,7 +63,6 @@ export async function build({
         if (!channels.has(id)) channels.set(id, { ch, country, regions: [] });
         channels.get(id).regions.push(region);
       }
-      catalogs.push({ country, region, ids: list.map((ch) => metaId(country.id, ch.key)) });
       report.countries[country.name][region] = list.length;
       log(`${country.name} / ${region}: ${list.length} channels`);
     }
@@ -128,28 +126,43 @@ export async function build({
     await writeFile(file, JSON.stringify(data));
   };
 
-  const metas = new Map();
+  const entries = [];
   let files = posters.size;
   for (const [id, { ch, country, regions }] of channels) {
+    const place = placeChannel(ch, regions, country.regions);
     const meta = toMeta(country.id, ch, {
+      name: place.name,
       poster: posters.get(ch.logo),
       recent: recentlyAired(history[ch.key], now, ch.name),
     });
-    metas.set(id, meta);
+    entries.push({ ch, country, regions, place, meta, home: country.regions.indexOf(regions[0]) });
     await writeJson(`meta/${TYPE}/${id}.json`, { meta });
     await writeJson(`stream/${TYPE}/${id}.json`, {
       streams: [toStream(ch, regions, country.regions, { webReady: webReady.get(ch.key) ?? true })],
     });
     files += 2;
   }
-  for (const { country, region, ids } of catalogs) {
-    const list = ids.map((id) => metas.get(id));
-    for (const rel of catalogPaths(country.id, region, region === country.regions[0])) {
-      await writeJson(rel, { metas: list }); files++;
+
+  const labels = config.filterLabels;
+  for (const country of countries) {
+    const mine = entries.filter((e) => e.country === country).sort(catalogOrder);
+    const lists = {
+      [labels.all]: mine,
+      [labels.other]: mine.filter((e) => e.place.kind === "other"),
+      ...Object.fromEntries(country.regions.map((region) =>
+        [region, mine.filter((e) => e.place.kind !== "other" && e.regions.includes(region))])),
+    };
+    const options = filterOptions(country, labels);
+    for (const option of options) {
+      const metas = lists[option].map((e) => e.meta);
+      for (const rel of catalogPaths(country.id, option, option === options[0])) {
+        await writeJson(rel, { metas }); files++;
+      }
     }
+    report.countries[country.name][labels.other] = lists[labels.other].length;
   }
 
-  await writeJson("manifest.json", buildManifest(countries));
+  await writeJson("manifest.json", buildManifest(countries, labels));
   await writeJson("history.json", history);
   await writeFile(join(outDir, ".nojekyll"), "");
   await writeFile(join(outDir, "index.html"), installPage(base));
@@ -183,7 +196,7 @@ main{max-width:520px}h1{margin:0 0 8px}p{color:var(--muted)}
 a.btn{display:inline-block;background:var(--accent);color:#fff;padding:10px 18px;border-radius:8px;text-decoration:none;margin-right:8px}
 code{word-break:break-all;font-size:14px}</style></head><body><main>
 <h1>${ADDON_NAME}</h1>
-<p>Free live TV channels for Stremio, by country and city. Find them under Discover → Channels, pick a country, then pick your city.</p>
+<p>Free live TV channels for Stremio, by country and city. Find them under Discover → Channels → Australia, then pick your city (or City for every channel).</p>
 <p><a class="btn" href="${stremio}">Install in Stremio</a><a href="report.json">Build report</a></p>
 <p>Or paste this into Stremio's addon search:<br><code>${manifest}</code></p>
 <p>Streams come from the broadcasters' free apps via <a href="https://i.mjh.nz/">i.mjh.nz</a> and only play from inside the country.</p>

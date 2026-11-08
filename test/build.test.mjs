@@ -10,7 +10,10 @@ import { build } from "../scripts/build.mjs";
 
 const NOW = 2_000_000_000;
 const countries = [{ id: "au", name: "Australia", source: "https://fake.test/au", regions: ["Brisbane", "Sydney"] }];
-const config = { exclude: [], minChannelsPerRegion: 2, notWebReadyHosts: ["dai.test", "flaky.test"] };
+const config = {
+  exclude: [], minChannelsPerRegion: 2, notWebReadyHosts: ["dai.test", "flaky.test"],
+  filterLabels: { all: "City", other: "Other" },
+};
 
 const national = {
   "mjh-abc": {
@@ -65,9 +68,14 @@ test("builds catalogs per region, one meta and stream per channel", async () => 
   const { outDir, report } = await run();
   assert.equal(report.channels, 4);
 
-  const bne = await read(outDir, "catalog/channel/au/genre=Brisbane.json");
-  assert.deepEqual(bne.metas.map((m) => m.id), ["livetv-au-mjh-abc", "livetv-au-mjh-10-qld"]);
-  assert.deepEqual(await read(outDir, "catalog/channel/au.json"), bne, "no region falls back to the first one");
+  const names = async (option) => (await read(outDir, `catalog/channel/au/genre=${option}.json`)).metas.map((m) => m.name);
+  assert.deepEqual(await names("Brisbane"), ["ABC TV", "10 (Brisbane)"]);
+  assert.deepEqual(await names("Sydney"), ["ABC TV", "Seven (Sydney)"], "regional feeds stay out of city lists");
+  assert.deepEqual(await names("Other"), ["Flaky"]);
+  assert.deepEqual(await names("City"), ["ABC TV", "10 (Brisbane)", "Seven (Sydney)", "Flaky"]);
+  assert.deepEqual(await read(outDir, "catalog/channel/au.json"), await read(outDir, "catalog/channel/au/genre=City.json"),
+    "no filter falls back to the all-channels list");
+  assert.deepEqual((await read(outDir, "manifest.json")).catalogs[0].extra[0].options, ["City", "Brisbane", "Sydney", "Other"]);
 
   const abc = await read(outDir, "stream/channel/livetv-au-mjh-abc.json");
   assert.equal(abc.streams[0].title, "ABC TV\nAll regions");

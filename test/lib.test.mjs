@@ -1,8 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  availability, buildManifest, catalogPaths, isGenericTitle, mergeHistory, recentlyAired, regionChannels,
-  showTitle, toMeta, toStream, valueSpellings,
+  availability, buildManifest, catalogOrder, catalogPaths, filterOptions, isGenericTitle, mergeHistory, placeChannel,
+  recentlyAired, regionChannels, showTitle, toMeta, toStream, valueSpellings,
 } from "../src/lib.mjs";
 import { describe } from "../src/descriptions.mjs";
 
@@ -107,14 +107,35 @@ test("catalogPaths covers encodings and the no-region default", () => {
   assert.deepEqual(catalogPaths("au", "Brisbane", true), ["catalog/channel/au/genre=Brisbane.json", "catalog/channel/au.json"]);
 });
 
-test("manifest has one catalog per country with a required region filter", () => {
-  const m = buildManifest([{ id: "au", name: "Australia", regions: ["Brisbane", "Sydney"] }]);
+test("placeChannel tells national, city and regional feeds apart", () => {
+  const all = ["Sydney", "Melbourne", "Canberra"];
+  assert.deepEqual(placeChannel({ name: "SBS", chno: 30 }, all, all), { kind: "national", name: "SBS" });
+  assert.deepEqual(placeChannel({ name: "Seven", chno: 71 }, ["Sydney", "Canberra"], all), { kind: "city", name: "Seven (Sydney)" });
+  assert.deepEqual(placeChannel({ name: "Seven Cairns" }, ["Sydney"], all), { kind: "other", name: "Seven Cairns" });
+});
+
+test("catalogOrder: numbers first (cities by population), then national by name, then regional", () => {
+  const e = (name, chno, kind, home = 0) => ({ ch: { chno }, place: { kind, name }, home });
+  const list = [
+    e("Seven Cairns", undefined, "other"), e("Bondi Vet", undefined, "national"), e("Seven (Melbourne)", 71, "city", 1),
+    e("ABC Kids", 22, "national"), e("Seven (Sydney)", 71, "city", 0), e("All Saints", undefined, "national"),
+  ];
+  assert.deepEqual(list.sort(catalogOrder).map((x) => x.place.name),
+    ["ABC Kids", "Seven (Sydney)", "Seven (Melbourne)", "All Saints", "Bondi Vet", "Seven Cairns"]);
+});
+
+test("manifest has one catalog per country with a required filter: all, regions, other", () => {
+  const country = { id: "au", name: "Australia", regions: ["Sydney", "Brisbane"] };
+  const labels = { all: "City", other: "Other" };
+  assert.deepEqual(filterOptions(country, labels), ["City", "Sydney", "Brisbane", "Other"]);
+  const m = buildManifest([country], labels);
   assert.deepEqual(m.types, ["channel"]);
   assert.deepEqual(m.resources, ["catalog", "meta", "stream"]);
   assert.deepEqual(m.idPrefixes, ["livetv-"]);
   assert.equal(m.catalogs.length, 1);
   const [c] = m.catalogs;
   assert.equal(c.name, "Australia");
-  assert.deepEqual(c.extra, [{ name: "genre", options: ["Brisbane", "Sydney"], isRequired: true }]);
+  assert.deepEqual(c.extra, [{ name: "genre", options: ["City", "Sydney", "Brisbane", "Other"], isRequired: true }]);
+  assert.deepEqual(c.genres, c.extra[0].options);
   assert.deepEqual(c.extraRequired, ["genre"]);
 });

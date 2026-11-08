@@ -24,6 +24,38 @@ export function regionChannels(tvJson, exclude = []) {
     });
 }
 
+// ---- Grouping across regions ------------------------------------------------
+
+/** The genre dropdown: everything, then each region, then regional feeds. */
+export const filterOptions = (country, labels) => [labels.all, ...country.regions, labels.other];
+
+/**
+ * Where a channel belongs, given the regions (in population order) whose lists
+ * include it:
+ *   national: in every region (streaming channels, SBS, ABC Kids…)
+ *   city:     a capital's own feed, numbered (Seven, ABC TV); named after the most
+ *             populous city it serves
+ *   other:    an unnumbered feed for a regional area (Seven Cairns)
+ */
+export function placeChannel(ch, regions, allRegions) {
+  if (regions.length === allRegions.length) return { kind: "national", name: ch.name };
+  if (ch.chno == null) return { kind: "other", name: ch.name };
+  return { kind: "city", name: `${ch.name} (${regions[0]})` };
+}
+
+/**
+ * Catalog order: numbered channels by number (a city's feeds in population
+ * order), then unnumbered national channels by name, then regional feeds by
+ * region and name.
+ */
+export function catalogOrder(a, b) {
+  const group = (c) => (c.place.kind === "other" ? 2 : c.ch.chno == null ? 1 : 0);
+  return group(a) - group(b)
+    || (a.ch.chno ?? 0) - (b.ch.chno ?? 0)
+    || a.home - b.home
+    || a.place.name.localeCompare(b.place.name);
+}
+
 // ---- Schedule history -------------------------------------------------------
 // tv.json only covers roughly the last 4 and next 9 hours, so each build merges
 // it into a 7-day history (published as history.json and read back next build).
@@ -99,14 +131,14 @@ export function topShowShare(programs = []) {
  * one; otherwise a one-line description of the channel. Either way it's followed
  * by what the channel has been airing.
  */
-export function toMeta(countryId, ch, { poster, recent = [] } = {}) {
+export function toMeta(countryId, ch, { name = ch.name, poster, recent = [] } = {}) {
   const id = metaId(countryId, ch.key);
   const about = ch.description?.trim() || describe(ch.name, ch.network, { singleShowShare: topShowShare(ch.programs) });
   const aired = recent.length ? `Recently aired: ${recent.join(", ")}` : "";
   return {
     id,
     type: TYPE,
-    name: ch.name,
+    name,
     poster: poster || ch.logo || undefined,
     posterShape: "square",
     logo: ch.logo || undefined,
@@ -152,16 +184,16 @@ export function valueSpellings(value) {
   ])];
 }
 
-export function catalogPaths(countryId, region, isDefault) {
+export function catalogPaths(countryId, option, isDefault) {
   const dir = `catalog/${TYPE}/${countryId}`;
-  const paths = valueSpellings(region).map((v) => `${dir}/genre=${v}.json`);
-  // Stremio's own apps always send a region (it's required), but other clients may not.
+  const paths = valueSpellings(option).map((v) => `${dir}/genre=${v}.json`);
+  // Stremio's own apps always send a filter (it's required), but other clients may not.
   if (isDefault) paths.push(`${dir}.json`);
   return paths;
 }
 
 // Bump when the manifest changes so installed copies refresh.
-export function buildManifest(countries, version = "1.1.0") {
+export function buildManifest(countries, labels, version = "1.2.0") {
   return {
     id: "community.live-channels",
     version,
@@ -176,10 +208,10 @@ export function buildManifest(countries, version = "1.1.0") {
       type: TYPE,
       id: c.id,
       name: c.name,
-      extra: [{ name: "genre", options: c.regions, isRequired: true }],
+      extra: [{ name: "genre", options: filterOptions(c, labels), isRequired: true }],
       // Older clients (Stremio desktop v4) read these instead of `extra`; without
-      // extraRequired they show "None" and send requests with no region.
-      genres: c.regions,
+      // extraRequired they show "None" and send requests with no filter.
+      genres: filterOptions(c, labels),
       extraSupported: ["genre"],
       extraRequired: ["genre"],
     })),
