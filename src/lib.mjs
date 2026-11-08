@@ -1,9 +1,9 @@
 // Pure helpers: turning i.mjh.nz channel data into Stremio objects and file paths.
 import { describe } from "./descriptions.mjs";
 
-// Stremio's built-in "channel" type is labelled "Channel" in Discover; a type it
-// doesn't know is shown as written.
-export const TYPE = "Channels";
+// Lowercase like Stremio's own types (movie, series). Not its built-in "channel",
+// which expects YouTube-style channels with a list of videos.
+export const TYPE = "channels";
 export const ID_PREFIX = "livetv-";
 export const ADDON_NAME = "Live Channels";
 
@@ -19,17 +19,65 @@ export function regionChannels(tvJson, exclude = []) {
   const skip = new Set(exclude);
   return Object.entries(tvJson)
     .filter(([key, ch]) => !skip.has(key) && ch.hls !== false && ch.mjh_master && ch.name)
-    .map(([key, ch]) => ({ key, ...ch }))
-    .sort((a, b) => {
-      const na = a.chno ?? Infinity, nb = b.chno ?? Infinity;
-      return na - nb || a.name.localeCompare(b.name);
-    });
+    .map(([key, ch]) => ({ key, ...ch, url: ch.mjh_master }))
+    .sort(byNumber);
 }
+
+const byNumber = (a, b) => (a.chno ?? Infinity) - (b.chno ?? Infinity) || a.name.localeCompare(b.name);
+
+/**
+ * Channels from a free streaming service's .channels.json on i.mjh.nz (Pluto TV,
+ * The Roku Channel), for one of its regions or, for single-region services, all
+ * of them. DRM channels (license_url) are dropped: Stremio can't play them.
+ * Streams go through i.mjh.nz's jmp2.uk redirector, which gets a fresh session
+ * link from the service for the region asked for.
+ */
+export function serviceChannels(json, source, service, exclude = []) {
+  const skip = new Set(exclude);
+  const list = source.region ? json.regions?.[source.region]?.channels : json.channels;
+  return Object.entries(list || {})
+    .map(([id, ch]) => ({ id, key: `${service.prefix}-${id}`, ch }))
+    .filter(({ key, ch }) => !skip.has(key) && !ch.license_url && ch.name)
+    .map(({ id, key, ch }) => ({
+      key,
+      name: ch.name.trim(),
+      logo: ch.logo,
+      chno: ch.chno,
+      description: ch.description,
+      programs: ch.programs,
+      network: service.name,
+      group: cleanGroup(source.group ?? ch.group ?? ch.groups?.[0]),
+      url: service.stream.replace("{id}", id),
+    }))
+    .sort(byNumber);
+}
+
+/** Channels from a single tv.json (New Zealand), grouped by network. */
+export const tvChannels = (tvJson, exclude) =>
+  regionChannels(tvJson, exclude).map((ch) => ({ ...ch, group: cleanGroup(ch.network) }));
+
+/**
+ * Group names become file names, so characters that paths or Windows can't hold
+ * are replaced. An empty group means "Other".
+ */
+export const cleanGroup = (group) => String(group ?? "").replace(/[\\/:*?"<>|#%]+/g, " ").replace(/\s+/g, " ").trim();
 
 // ---- Grouping across regions ------------------------------------------------
 
-/** The genre dropdown: everything, then each region, then regional feeds. */
-export const filterOptions = (country, labels) => [labels.all, ...country.regions, labels.other];
+/** A city-based country's dropdown: everything, then each city, then regional feeds. */
+export const filterOptions = (country, labels) => [labels.city, ...country.regions, labels.other];
+
+/**
+ * A service-based country's dropdown: everything, then each group in the order
+ * the channels first use it (the services list channels in guide order), then
+ * Other for channels with no group.
+ */
+export function groupOptions(channels, allLabel, otherLabel) {
+  const groups = [...new Set(channels.map((ch) => ch.group).filter((g) => !isOther(g, otherLabel)))];
+  return [allLabel, ...groups, ...(channels.some((ch) => isOther(ch.group, otherLabel)) ? [otherLabel] : [])];
+}
+
+export const isOther = (group, otherLabel) => !group || group === otherLabel;
 
 /**
  * Where a channel belongs, given the regions (in population order) whose lists
@@ -152,7 +200,7 @@ export function toMeta(countryId, ch, { name = ch.name, poster, recent = [] } = 
   };
 }
 
-/** Where a channel is available: "Sydney", or "All regions" for national ones. */
+/** Where an Australian channel is available: "Sydney", or "All regions" for national ones. */
 export function availability(regions, allRegions) {
   return regions.length === allRegions.length ? "All regions" : regions.join(", ");
 }
@@ -166,12 +214,8 @@ export function availability(regions, allRegions) {
  * - notWebReady: apps without a streaming server, like Samsung's, may then
  *   refuse streams their own player can play.
  */
-export function toStream(ch, regions, allRegions) {
-  return {
-    name: "Live",
-    title: `${ch.name}\n${availability(regions, allRegions)}`,
-    url: ch.mjh_master,
-  };
+export function toStream(ch, note) {
+  return { name: "Live", title: `${ch.name}\n${note}`, url: ch.url };
 }
 
 /**
@@ -180,11 +224,15 @@ export function toStream(ch, regions, allRegions) {
  * the path, so write every spelling ("Gold Coast" as Gold%20Coast and Gold+Coast).
  */
 export function valueSpellings(value) {
+  // Form encoding (Stremio's own) also escapes ! ~ ' ( ), which encodeURIComponent keeps.
+  const form = encodeURIComponent(value).replace(/[!~'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
   return [...new Set([
     value,
     value.replace(/ /g, "+"),
     encodeURIComponent(value),
     encodeURIComponent(value).replace(/%20/g, "+"),
+    form,
+    form.replace(/%20/g, "+"),
   ])];
 }
 
@@ -197,25 +245,26 @@ export function catalogPaths(countryId, option, isDefault) {
 }
 
 // Bump when the manifest changes so installed copies refresh.
-export function buildManifest(countries, labels, version = "1.4.0") {
+// catalogs: [{ id, name, options }], one per country.
+export function buildManifest(catalogs, version = "2.0.0") {
   return {
     id: "community.live-channels",
     version,
     name: ADDON_NAME,
-    description: "Free live TV channels by country and city, from the broadcasters' own free streams (via i.mjh.nz). Find them under Discover → Channels.",
+    description: "Free live TV channels by country, from broadcasters' and free streaming services' own streams (via i.mjh.nz). Find them under Discover → channels.",
     // Plain resource names with types and idPrefixes at the top level: the form
     // every Stremio client and the account sync understand.
     resources: ["catalog", "meta", "stream"],
     types: [TYPE],
     idPrefixes: [ID_PREFIX],
-    catalogs: countries.map((c) => ({
+    catalogs: catalogs.map((c) => ({
       type: TYPE,
       id: c.id,
       name: c.name,
-      extra: [{ name: "genre", options: filterOptions(c, labels), isRequired: true }],
+      extra: [{ name: "genre", options: c.options, isRequired: true }],
       // Older clients (Stremio desktop v4) read these instead of `extra`; without
       // extraRequired they show "None" and send requests with no filter.
-      genres: filterOptions(c, labels),
+      genres: c.options,
       extraSupported: ["genre"],
       extraRequired: ["genre"],
     })),

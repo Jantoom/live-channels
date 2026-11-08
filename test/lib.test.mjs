@@ -1,8 +1,9 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  availability, buildManifest, catalogOrder, catalogPaths, filterOptions, isGenericTitle, mergeHistory, placeChannel,
-  recentlyAired, regionChannels, showTitle, toMeta, toStream, valueSpellings,
+  availability, buildManifest, catalogOrder, catalogPaths, cleanGroup, filterOptions, groupOptions, isGenericTitle,
+  mergeHistory, placeChannel, recentlyAired, regionChannels, serviceChannels, showTitle, toMeta, toStream, tvChannels,
+  valueSpellings,
 } from "../src/lib.mjs";
 import { describe } from "../src/descriptions.mjs";
 
@@ -16,8 +17,39 @@ const tv = {
 };
 
 test("regionChannels sorts by channel number, then unnumbered by name, and drops clips and excludes", () => {
-  const keys = regionChannels(tv, ["mjh-radio"]).map((c) => c.key);
-  assert.deepEqual(keys, ["mjh-abc", "mjh-seven", "mjh-fast-a", "mjh-fast-b"]);
+  const list = regionChannels(tv, ["mjh-radio"]);
+  assert.deepEqual(list.map((c) => c.key), ["mjh-abc", "mjh-seven", "mjh-fast-a", "mjh-fast-b"]);
+  assert.equal(list[0].url, "https://i.mjh.nz/.r/abc.m3u8");
+  assert.deepEqual(tvChannels(tv, ["mjh-radio"]).map((c) => c.group), ["ABC", "Seven", "Seven", "Seven"]);
+});
+
+test("serviceChannels reads one region, drops DRM and excludes, and links through the redirector", () => {
+  const service = { name: "Pluto TV", prefix: "plu", stream: "https://jmp2.uk/plu-{id}.m3u8" };
+  const json = { regions: { us: { channels: {
+    x: { name: "Movies ", chno: 5, group: "Movies", logo: "l", description: "d" },
+    y: { name: "Locked", chno: 1, group: "Movies", license_url: "u" },
+    z: { name: "News", chno: 2, group: "News: Live" },
+    w: { name: "Gone", chno: 3, group: "News" },
+  } } } };
+  const list = serviceChannels(json, { service: "PlutoTV", region: "us" }, service, ["plu-w"]);
+  assert.deepEqual(list.map((c) => [c.key, c.name, c.group, c.url]), [
+    ["plu-z", "News", "News Live", "https://jmp2.uk/plu-z.m3u8"],
+    ["plu-x", "Movies", "Movies", "https://jmp2.uk/plu-x.m3u8"],
+  ]);
+  assert.equal(list[1].network, "Pluto TV");
+  const rokuJson = { channels: { r: { name: "R", groups: ["News", "Talk"] } } };
+  const roku = { prefix: "rok", stream: "{id}" };
+  assert.equal(serviceChannels(rokuJson, {}, roku)[0].group, "News");
+  assert.equal(serviceChannels(rokuJson, { group: "Roku" }, roku)[0].group, "Roku");
+  assert.deepEqual(serviceChannels({ regions: {} }, { region: "xx" }, service), []);
+});
+
+test("groupOptions lists groups in first-use order with Other last", () => {
+  const chs = [{ group: "Movies" }, { group: "" }, { group: "News" }, { group: "Movies" }, { group: "Other" }];
+  assert.deepEqual(groupOptions(chs, "Genre", "Other"), ["Genre", "Movies", "News", "Other"]);
+  assert.deepEqual(groupOptions([{ group: "A" }], "Genre", "Other"), ["Genre", "A"]);
+  assert.equal(cleanGroup(" Home/Garden?  "), "Home Garden");
+  assert.equal(cleanGroup(undefined), "");
 });
 
 test("showTitle strips episode markers but keeps show and episode names", () => {
@@ -70,7 +102,7 @@ test("toMeta builds a playable channel meta with a fitted poster and recent show
   const ch = { key: "mjh-10peach", name: "10 Comedy", network: "Ten", chno: 11, logo: "https://x/logo.png", mjh_master: "u" };
   const meta = toMeta("au", ch, { poster: "https://site/posters/p.png", recent: ["Frasier", "Friends"] });
   assert.equal(meta.id, "livetv-au-mjh-10peach");
-  assert.equal(meta.type, "Channels");
+  assert.equal(meta.type, "channels");
   assert.equal(meta.releaseInfo, "Channel 11");
   assert.equal(meta.poster, "https://site/posters/p.png");
   assert.equal(meta.logo, "https://x/logo.png");
@@ -92,15 +124,16 @@ test("streams are plain links that say which regions carry the channel", () => {
   const all = ["Brisbane", "Sydney"];
   assert.equal(availability(all, all), "All regions");
   assert.equal(availability(["Sydney"], all), "Sydney");
-  const ch = { name: "10", mjh_master: "https://i.mjh.nz/.r/10.m3u8", headers: { "user-agent": "otg/1.5.1" } };
-  assert.deepEqual(toStream(ch, ["Sydney"], all), { name: "Live", title: "10\nSydney", url: "https://i.mjh.nz/.r/10.m3u8" });
+  const ch = { name: "10", url: "https://i.mjh.nz/.r/10.m3u8", headers: { "user-agent": "otg/1.5.1" } };
+  assert.deepEqual(toStream(ch, "Sydney"),{ name: "Live", title: "10\nSydney", url: "https://i.mjh.nz/.r/10.m3u8" });
 });
 
 test("catalogPaths covers encodings and the no-region default", () => {
   assert.deepEqual(valueSpellings("Sydney"), ["Sydney"]);
   assert.deepEqual(valueSpellings("Gold Coast"), ["Gold Coast", "Gold+Coast", "Gold%20Coast"]);
-  assert.deepEqual(catalogPaths("au", "Sydney", false), ["catalog/Channels/au/genre=Sydney.json"]);
-  assert.deepEqual(catalogPaths("au", "Brisbane", true), ["catalog/Channels/au/genre=Brisbane.json", "catalog/Channels/au.json"]);
+  assert.ok(valueSpellings("Season's Greetings").includes("Season%27s+Greetings"));
+  assert.deepEqual(catalogPaths("au", "Sydney", false), ["catalog/channels/au/genre=Sydney.json"]);
+  assert.deepEqual(catalogPaths("au", "Brisbane", true), ["catalog/channels/au/genre=Brisbane.json", "catalog/channels/au.json"]);
 });
 
 test("placeChannel tells national, city and regional feeds apart", () => {
@@ -122,10 +155,10 @@ test("catalogOrder: numbers first (cities by population), then national by name,
 
 test("manifest has one catalog per country with a required filter: all, regions, other", () => {
   const country = { id: "au", name: "Australia", regions: ["Sydney", "Brisbane"] };
-  const labels = { all: "City", other: "Other" };
+  const labels = { city: "City", other: "Other" };
   assert.deepEqual(filterOptions(country, labels), ["City", "Sydney", "Brisbane", "Other"]);
-  const m = buildManifest([country], labels);
-  assert.deepEqual(m.types, ["Channels"]);
+  const m = buildManifest([{ id: "au", name: "Australia", options: filterOptions(country, labels) }]);
+  assert.deepEqual(m.types, ["channels"]);
   assert.deepEqual(m.resources, ["catalog", "meta", "stream"]);
   assert.deepEqual(m.idPrefixes, ["livetv-"]);
   assert.equal(m.catalogs.length, 1);
