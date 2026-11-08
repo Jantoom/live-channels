@@ -70,7 +70,7 @@ test("toMeta builds a playable channel meta with a fitted poster and recent show
   const ch = { key: "mjh-10peach", name: "10 Comedy", network: "Ten", chno: 11, logo: "https://x/logo.png", mjh_master: "u" };
   const meta = toMeta("au", ch, { poster: "https://site/posters/p.png", recent: ["Frasier", "Friends"] });
   assert.equal(meta.id, "livetv-au-mjh-10peach");
-  assert.equal(meta.type, "channel");
+  assert.equal(meta.type, "Channels");
   assert.equal(meta.releaseInfo, "Channel 11");
   assert.equal(meta.poster, "https://site/posters/p.png");
   assert.equal(meta.logo, "https://x/logo.png");
@@ -88,24 +88,19 @@ test("toMeta keeps i.mjh.nz's own description and leaves out what's missing", ()
   assert.equal(bare.poster, undefined);
 });
 
-test("streams say which regions carry the channel; proxied ones carry i.mjh.nz's headers", () => {
+test("streams are plain links that say which regions carry the channel", () => {
   const all = ["Brisbane", "Sydney"];
   assert.equal(availability(all, all), "All regions");
   assert.equal(availability(["Sydney"], all), "Sydney");
-  const ch = { name: "10", mjh_master: "https://i.mjh.nz/.r/10.m3u8", headers: { referer: " ", "user-agent": "otg/1.5.1" } };
-  const s = toStream(ch, ["Sydney"], all);
-  assert.equal(s.url, "https://i.mjh.nz/.r/10.m3u8");
-  assert.equal(s.title, "10\nSydney");
-  assert.equal(s.behaviorHints, undefined);
-  assert.deepEqual(toStream(ch, all, all, { proxy: true }).behaviorHints,
-    { notWebReady: true, proxyHeaders: { request: { "user-agent": "otg/1.5.1" } } }, "blank headers are left out");
+  const ch = { name: "10", mjh_master: "https://i.mjh.nz/.r/10.m3u8", headers: { "user-agent": "otg/1.5.1" } };
+  assert.deepEqual(toStream(ch, ["Sydney"], all), { name: "Live", title: "10\nSydney", url: "https://i.mjh.nz/.r/10.m3u8" });
 });
 
 test("catalogPaths covers encodings and the no-region default", () => {
   assert.deepEqual(valueSpellings("Sydney"), ["Sydney"]);
   assert.deepEqual(valueSpellings("Gold Coast"), ["Gold Coast", "Gold+Coast", "Gold%20Coast"]);
-  assert.deepEqual(catalogPaths("au", "Sydney", false), ["catalog/channel/au/genre=Sydney.json"]);
-  assert.deepEqual(catalogPaths("au", "Brisbane", true), ["catalog/channel/au/genre=Brisbane.json", "catalog/channel/au.json"]);
+  assert.deepEqual(catalogPaths("au", "Sydney", false), ["catalog/Channels/au/genre=Sydney.json"]);
+  assert.deepEqual(catalogPaths("au", "Brisbane", true), ["catalog/Channels/au/genre=Brisbane.json", "catalog/Channels/au.json"]);
 });
 
 test("placeChannel tells national, city and regional feeds apart", () => {
@@ -130,7 +125,7 @@ test("manifest has one catalog per country with a required filter: all, regions,
   const labels = { all: "City", other: "Other" };
   assert.deepEqual(filterOptions(country, labels), ["City", "Sydney", "Brisbane", "Other"]);
   const m = buildManifest([country], labels);
-  assert.deepEqual(m.types, ["channel"]);
+  assert.deepEqual(m.types, ["Channels"]);
   assert.deepEqual(m.resources, ["catalog", "meta", "stream"]);
   assert.deepEqual(m.idPrefixes, ["livetv-"]);
   assert.equal(m.catalogs.length, 1);

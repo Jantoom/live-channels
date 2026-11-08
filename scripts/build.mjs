@@ -94,31 +94,6 @@ export async function build({
     }
   });
 
-  // i.mjh.nz links redirect to the broadcaster's host. Follow the redirects and
-  // check the hosts against config.proxyHosts. The responses themselves aren't
-  // judged: the build runs outside Australia, where geo-blocked hosts answer
-  // differently from how they answer a viewer here.
-  async function needsProxy(url) {
-    let current = new URL(url);
-    for (let hop = 0; hop < 6; hop++) {
-      if (config.proxyHosts.includes(current.host)) return true;
-      try {
-        const res = await fetchImpl(current, { redirect: "manual" });
-        await res.body?.cancel?.();
-        const location = res.headers.get("location");
-        if (!location) return false;
-        current = new URL(location, current);
-      } catch {
-        return false; // unknown; assume it plays directly
-      }
-    }
-    return false;
-  }
-  const proxied = new Map();
-  if (config.proxyHosts?.length) {
-    await mapLimit(all, 8, async ({ ch }) => proxied.set(ch.key, await needsProxy(ch.mjh_master)));
-  }
-
   // ---- 4. Write the static addon --------------------------------------------
   const writeJson = async (rel, data) => {
     const file = join(outDir, rel);
@@ -138,7 +113,7 @@ export async function build({
     entries.push({ ch, country, regions, place, meta, home: country.regions.indexOf(regions[0]) });
     await writeJson(`meta/${TYPE}/${id}.json`, { meta });
     await writeJson(`stream/${TYPE}/${id}.json`, {
-      streams: [toStream(ch, regions, country.regions, { proxy: proxied.get(ch.key) ?? false })],
+      streams: [toStream(ch, regions, country.regions)],
     });
     files += 2;
   }
@@ -169,7 +144,6 @@ export async function build({
   Object.assign(report, {
     channels: channels.size,
     posters: posters.size,
-    proxied: [...proxied].filter(([, yes]) => yes).map(([key]) => key),
     historyPrograms: Object.values(history).reduce((n, e) => n + e.length, 0),
     warnings,
   });

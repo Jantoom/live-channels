@@ -1,7 +1,9 @@
 // Pure helpers: turning i.mjh.nz channel data into Stremio objects and file paths.
 import { describe } from "./descriptions.mjs";
 
-export const TYPE = "channel";       // shows as "Channels" in Stremio's Discover
+// Stremio's built-in "channel" type is labelled "Channel" in Discover; a type it
+// doesn't know is shown as written.
+export const TYPE = "Channels";
 export const ID_PREFIX = "livetv-";
 export const ADDON_NAME = "Live Channels";
 
@@ -156,21 +158,19 @@ export function availability(regions, allRegions) {
 }
 
 /**
- * proxy is true when the stream passes through a host that needs i.mjh.nz's
- * published player headers (ch.headers). 10's key server answers "not found" to
- * Stremio's own player, which then plays a few seconds and quits. proxyHeaders
- * makes Stremio play the stream through its streaming server's proxy. The proxy
- * rewrites the playlists so every request, keys included, carries those
- * headers, which also gets around hosts that block web playback. notWebReady
- * tells Stremio Web it needs a streaming server for this one.
+ * A plain stream link with no behaviorHints. Both kinds were tried and dropped:
+ * - proxyHeaders (to send i.mjh.nz's player headers, which 10's key server
+ *   needs): Stremio's streaming-server proxy (v4.22.3) appends "null" to
+ *   rewritten URLs that have no query string, which breaks 10's playlists and
+ *   several other channels.
+ * - notWebReady: apps without a streaming server, like Samsung's, may then
+ *   refuse streams their own player can play.
  */
-export function toStream(ch, regions, allRegions, { proxy = false } = {}) {
-  const request = Object.fromEntries(Object.entries(ch.headers || {}).filter(([, v]) => String(v).trim()));
+export function toStream(ch, regions, allRegions) {
   return {
     name: "Live",
     title: `${ch.name}\n${availability(regions, allRegions)}`,
     url: ch.mjh_master,
-    ...(proxy ? { behaviorHints: { notWebReady: true, proxyHeaders: { request } } } : {}),
   };
 }
 
@@ -197,7 +197,7 @@ export function catalogPaths(countryId, option, isDefault) {
 }
 
 // Bump when the manifest changes so installed copies refresh.
-export function buildManifest(countries, labels, version = "1.3.0") {
+export function buildManifest(countries, labels, version = "1.4.0") {
   return {
     id: "community.live-channels",
     version,

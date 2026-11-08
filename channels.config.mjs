@@ -27,14 +27,4 @@ export const config = {
   // A region with fewer channels than this fails the build, so a bad fetch can't
   // replace the last good deployment with a near-empty list.
   minChannelsPerRegion: 20,
-  // Stream hosts that need Stremio's streaming-server proxy. Streams that redirect
-  // through one play via the proxy, which sends the player headers i.mjh.nz
-  // publishes on every request (see toStream in src/lib.mjs). Checked from
-  // Australia, Nov 2026.
-  proxyHosts: [
-    "dai.google.com",                    // 10's channels and Bloomberg: 10's key server refuses Stremio's own player
-                                         // ("Lavf" user agent), and Google's ad server doesn't reliably allow web playback
-    "live-ak.vimeocdn.com",              // GOOD.: only allows web playback from vimeo.com
-    "stream.aboriginalbroadcasting.org", // First Nations TV, Tourism TV: doesn't allow web playback at all
-  ],
 };
