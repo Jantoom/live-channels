@@ -35,10 +35,8 @@ export const countries = [
   { id: "br", name: "Brazil", sources: [{ service: "PlutoTV", region: "br" }] },
   { id: "mx", name: "Mexico", sources: [{ service: "PlutoTV", region: "mx" }] },
   { id: "de", name: "Germany", sources: [{ service: "PlutoTV", region: "de" }] },
-  // Samsung TV Plus (the only source of Sky News, GB News and Talk) is off while
-  // testing whether it's why GitHub Pages hangs on publish. To restore, put this
-  // source first: { service: "SamsungTVPlus", region: "gb", rename: { Sport: "Sports", "Music & Ambient": "Music" } }
-  { id: "gb", name: "United Kingdom", sources: [{ service: "PlutoTV", region: "gb" }] },
+  // Samsung first: it's the only source of Sky News, GB News and Talk.
+  { id: "gb", name: "United Kingdom", sources: [{ service: "SamsungTVPlus", region: "gb", rename: { Sport: "Sports", "Music & Ambient": "Music" } }, { service: "PlutoTV", region: "gb" }] },
   { id: "fr", name: "France", sources: [{ service: "PlutoTV", region: "fr" }] },
   { id: "it", name: "Italy", sources: [{ service: "PlutoTV", region: "it" }] },
   { id: "es", name: "Spain", sources: [{ service: "PlutoTV", region: "es" }] },

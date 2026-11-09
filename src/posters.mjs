@@ -8,7 +8,7 @@ import sharp from "sharp";
 
 const SIZE = 400, MARGIN = 32;
 // Bump to regenerate every cached poster after changing the drawing.
-const VERSION = 1;
+const VERSION = 2;
 const CLEAR = { r: 0, g: 0, b: 0, alpha: 0 };
 
 export const posterFile = (logoUrl) =>
@@ -19,7 +19,8 @@ export async function renderPoster(image) {
   return sharp(image)
     .resize(inner, inner, { fit: "contain", background: CLEAR })
     .extend({ top: MARGIN, bottom: MARGIN, left: MARGIN, right: MARGIN, background: CLEAR })
-    .png()
+    // A palette keeps transparency and is far smaller for flat logos and artwork alike.
+    .png({ palette: true, quality: 80, effort: 10, compressionLevel: 9 })
     .toBuffer();
 }
 
