@@ -26,7 +26,7 @@ The first push to `main` may already have started a run on its own. That's fine;
 
 1. Open `https://<your-username>.github.io/<repo-name>/`. The **deploy** job also shows this link once it finishes.
 2. Click **Install in Stremio**, or copy the `manifest.json` link on that page and paste it into Stremio's addon search box.
-3. In Stremio, go to **Discover**, set the type dropdown to **channels** and pick a country from the catalog dropdown. Australia opens on **City** (every channel; pick your city to see just its lineup); the other countries open on **Genre** (every channel; pick a genre to narrow it down).
+3. In Stremio, go to **Discover**, set the type dropdown to **channels** and pick a country from the catalog dropdown. Australia opens on **All** (every channel; pick your city to see just its lineup); the other countries also open on **All**, and you pick a genre to narrow it down.
 
 ## Afterwards
 

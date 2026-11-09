@@ -142,7 +142,7 @@ const SINGLE_SHOW = {
 };
 
 /** "Seven Cairns" → "Seven", "Channel 9 (Gold Coast)" → "Channel 9", "7two Regional" → "7two". */
-function baseName(name) {
+export function baseName(name) {
   return name.replace(/\s*\([^)]*\)$/, "").replace(/\s+Regional$/, "").replace(/^Seven\s+.+$/, "Seven");
 }
 

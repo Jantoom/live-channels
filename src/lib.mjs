@@ -1,5 +1,5 @@
 // Pure helpers: turning i.mjh.nz channel data into Stremio objects and file paths.
-import { describe } from "./descriptions.mjs";
+import { baseName, describe } from "./descriptions.mjs";
 
 // Lowercase like Stremio's own types (movie, series). Not its built-in "channel",
 // which expects YouTube-style channels with a list of videos.
@@ -30,26 +30,45 @@ const byNumber = (a, b) => (a.chno ?? Infinity) - (b.chno ?? Infinity) || a.name
  * The Roku Channel), for one of its regions or, for single-region services, all
  * of them. DRM channels (license_url) are dropped: Stremio can't play them.
  * Streams go through i.mjh.nz's jmp2.uk redirector, which gets a fresh session
- * link from the service for the region asked for.
+ * link from the service for the region asked for. The services' own numbers
+ * aren't ones anyone knows, so they only set the order and aren't kept.
  */
 export function serviceChannels(json, source, service, exclude = []) {
   const skip = new Set(exclude);
   const list = source.region ? json.regions?.[source.region]?.channels : json.channels;
-  return Object.entries(list || {})
+  const channels = Object.entries(list || {})
     .map(([id, ch]) => ({ id, key: `${service.prefix}-${id}`, ch }))
     .filter(({ key, ch }) => !skip.has(key) && !ch.license_url && ch.name)
-    .map(({ id, key, ch }) => ({
-      key,
-      name: ch.name.trim(),
-      logo: ch.logo,
-      chno: ch.chno,
-      description: ch.description,
-      programs: ch.programs,
-      network: service.name,
-      group: cleanGroup(source.group ?? ch.group ?? ch.groups?.[0]),
-      url: service.stream.replace("{id}", id),
-    }))
-    .sort(byNumber);
+    .sort((a, b) => byNumber(a.ch, b.ch))
+    .map(({ id, key, ch }) => {
+      const group = ch.group ?? ch.groups?.[0];
+      return {
+        key,
+        name: ch.name.trim(),
+        logo: ch.logo,
+        description: ch.description,
+        programs: ch.programs,
+        network: service.name,
+        group: cleanGroup(source.group ?? source.rename?.[group] ?? group),
+        url: service.stream.replace("{id}", id),
+      };
+    });
+  // Pluto lists some local stations in both News and Local News; keep the local copy.
+  const isLocal = (ch) => /^local\b/i.test(ch.group);
+  const local = new Set(channels.filter(isLocal).map((ch) => ch.name));
+  return channels.filter((ch) => isLocal(ch) || !local.has(ch.name));
+}
+
+// "News" in the services' groups, across their countries' languages.
+const NEWS_GROUP = /^(news|noticias|notícias|nachrichten|nyheter)\b/i;
+
+/**
+ * Where a channel goes in a service-based country's full list: numbered channels
+ * and news first, then channels with a mix of shows, then 24/7 single-show ones.
+ */
+export function listTier(ch) {
+  if (ch.chno != null || NEWS_GROUP.test(ch.group)) return 0;
+  return ch.programs?.length >= 2 && topShowShare(ch.programs) >= 0.8 ? 2 : 1;
 }
 
 /** Channels from a single tv.json (New Zealand), grouped by network. */
@@ -65,7 +84,7 @@ export const cleanGroup = (group) => String(group ?? "").replace(/[\\/:*?"<>|#%]
 // ---- Grouping across regions ------------------------------------------------
 
 /** A city-based country's dropdown: everything, then each city, then regional feeds. */
-export const filterOptions = (country, labels) => [labels.city, ...country.regions, labels.other];
+export const filterOptions = (country, labels) => [labels.all, ...country.regions, labels.other];
 
 /**
  * A service-based country's dropdown: everything, then each group in the order
@@ -94,14 +113,22 @@ export function placeChannel(ch, regions, allRegions) {
 }
 
 /**
- * Catalog order: numbered channels by number (a city's feeds in population
- * order), then unnumbered national channels by name, then regional feeds by
- * region and name.
+ * A regional feed with no number of its own takes the number of the broadcast
+ * it carries ("Seven Cairns" gets Seven's 71). numberOf: channel name -> number.
+ */
+export const withSharedNumber = (ch, numberOf) => ({ ...ch, chno: ch.chno ?? numberOf(baseName(ch.name)) });
+
+/**
+ * Catalog order: numbered channels by number (a broadcast's city feeds in
+ * population order, then its regional feeds), then unnumbered national channels
+ * by name, then any regional feeds still without a number.
  */
 export function catalogOrder(a, b) {
-  const group = (c) => (c.place.kind === "other" ? 2 : c.ch.chno == null ? 1 : 0);
+  const isOther = (c) => c.place.kind === "other";
+  const group = (c) => (c.ch.chno != null ? 0 : isOther(c) ? 2 : 1);
   return group(a) - group(b)
     || (a.ch.chno ?? 0) - (b.ch.chno ?? 0)
+    || isOther(a) - isOther(b)
     || a.home - b.home
     || a.place.name.localeCompare(b.place.name);
 }
@@ -246,7 +273,7 @@ export function catalogPaths(countryId, option, isDefault) {
 
 // Bump when the manifest changes so installed copies refresh.
 // catalogs: [{ id, name, options }], one per country.
-export function buildManifest(catalogs, version = "2.0.0") {
+export function buildManifest(catalogs, version = "2.1.0") {
   return {
     id: "community.live-channels",
     version,

@@ -3,21 +3,23 @@
 // Each country is one catalog in Stremio's Discover (channels → <country name>),
 // in the order listed. There are two kinds:
 //
+// The first option in every dropdown is filterLabels.all: every channel. It's
+// what Stremio opens on and what clients that send no filter get.
+//
 // - City-based (Australia): `source` and `regions`. i.mjh.nz publishes
-//   <source>/<region>/tv.json per city. The dropdown lists:
-//     - filterLabels.city: every channel. It's first, so it's what Stremio opens
-//       on and what clients that send no filter get. City feeds are named after
-//       their city ("Seven (Sydney)") so you can tell which version you're watching.
-//     - each region: the channels that region receives.
+//   <source>/<region>/tv.json per city. After "all", the dropdown lists:
+//     - each region: the channels that region receives. City feeds are named
+//       after their city ("Seven (Sydney)") so you can tell which version you're
+//       watching.
 //     - filterLabels.other: regional feeds outside the capitals ("Seven Cairns").
 //
 // - Service-based (everywhere else): `sources`, each one of
-//     { service, region }  a free streaming service's lineup for one country
+//     { service, region }  a free streaming service's lineup for one country;
+//                          `rename` merges its group names with another source's
 //     { service, group }   a single-region service, all filed under one option
 //     { tv }               a single i.mjh.nz tv.json, grouped by network
-//   The dropdown lists filterLabels.genre (or the country's own `filterLabel`)
-//   for every channel, then the services' own groups. A channel two sources
-//   share by name is only listed from the first.
+//   After "all", the dropdown lists the services' own groups. A channel two
+//   sources share by name is only listed from the first.
 
 export const countries = [
   {
@@ -33,7 +35,8 @@ export const countries = [
   { id: "br", name: "Brazil", sources: [{ service: "PlutoTV", region: "br" }] },
   { id: "mx", name: "Mexico", sources: [{ service: "PlutoTV", region: "mx" }] },
   { id: "de", name: "Germany", sources: [{ service: "PlutoTV", region: "de" }] },
-  { id: "gb", name: "United Kingdom", sources: [{ service: "PlutoTV", region: "gb" }] },
+  // Samsung first: it's the only source of Sky News, GB News and Talk.
+  { id: "gb", name: "United Kingdom", sources: [{ service: "SamsungTVPlus", region: "gb", rename: { Sport: "Sports", "Music & Ambient": "Music" } }, { service: "PlutoTV", region: "gb" }] },
   { id: "fr", name: "France", sources: [{ service: "PlutoTV", region: "fr" }] },
   { id: "it", name: "Italy", sources: [{ service: "PlutoTV", region: "it" }] },
   { id: "es", name: "Spain", sources: [{ service: "PlutoTV", region: "es" }] },
@@ -43,19 +46,21 @@ export const countries = [
   { id: "se", name: "Sweden", sources: [{ service: "PlutoTV", region: "se" }] },
   { id: "dk", name: "Denmark", sources: [{ service: "PlutoTV", region: "dk" }] },
   { id: "no", name: "Norway", sources: [{ service: "PlutoTV", region: "no" }] },
-  { id: "nz", name: "New Zealand", filterLabel: "Network", sources: [{ tv: "https://i.mjh.nz/nz/tv.json" }] },
+  { id: "nz", name: "New Zealand", sources: [{ tv: "https://i.mjh.nz/nz/tv.json" }] },
 ];
 
 // Free streaming services i.mjh.nz lists channels for. Keys are what `service`
-// refers to above; `prefix` starts each channel's id. Samsung TV Plus is left
-// out: about half its channels refuse viewers outside their own country.
+// refers to above; `prefix` starts each channel's id. Samsung TV Plus is only
+// used for the UK: most of its US channels refuse viewers outside the US, and
+// it adds little people would recognise there.
 export const services = {
+  SamsungTVPlus: { name: "Samsung TV Plus", prefix: "stvp", channels: "https://i.mjh.nz/SamsungTVPlus/.channels.json", stream: "https://jmp2.uk/stvp-{id}" },
   PlutoTV: { name: "Pluto TV", prefix: "plu", channels: "https://i.mjh.nz/PlutoTV/.channels.json", stream: "https://jmp2.uk/plu-{id}.m3u8" },
   Roku: { name: "The Roku Channel", prefix: "rok", channels: "https://i.mjh.nz/Roku/.channels.json", stream: "https://jmp2.uk/rok-{id}.m3u8" },
 };
 
 export const config = {
-  filterLabels: { city: "City", genre: "Genre", other: "Other" },
+  filterLabels: { all: "All", other: "Other" },
   // Channels to hide, by id: the part of the addon's id after "livetv-<country>-",
   // e.g. "mjh-sbs-sbs-radio-4" or "plu-5ba3fb9c4b078e0f37ad34e8".
   exclude: [],

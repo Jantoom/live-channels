@@ -9,7 +9,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { countries as defaultCountries, config as defaultConfig, services as defaultServices } from "../channels.config.mjs";
 import {
   TYPE, availability, buildManifest, catalogOrder, catalogPaths, filterOptions, groupOptions, isOther,
-  mergeHistory, metaId, placeChannel, recentlyAired, regionChannels, serviceChannels, toMeta, toStream, tvChannels,
+  listTier, mergeHistory, metaId, placeChannel, recentlyAired, regionChannels, serviceChannels, toMeta, toStream, tvChannels,
+  withSharedNumber,
 } from "../src/lib.mjs";
 import { makePoster } from "../src/posters.mjs";
 import { installPage } from "../src/install-page.mjs";
@@ -95,13 +96,15 @@ export async function build({
         label = service.name;
       }
       checkSize(`${country.name} / ${label}`, list);
-      const added = list.filter((ch) => !names.has(ch.name.toLowerCase()));
-      for (const ch of added) {
+      let added = 0;
+      for (const ch of list) {
+        if (names.has(ch.name.toLowerCase())) continue;
         names.add(ch.name.toLowerCase());
         channels.set(metaId(country.id, ch.key), { ch, country, regions: [] });
+        added++;
       }
-      counts[label] = added.length;
-      log(`${country.name} / ${label}: ${added.length} channels`);
+      counts[label] = added;
+      log(`${country.name} / ${label}: ${added} channels`);
     }
   }
   const all = [...channels.values()];
@@ -141,9 +144,11 @@ export async function build({
 
   const entries = [];
   let files = posters.size;
-  for (const [id, { ch, country, regions }] of channels) {
+  const numbers = new Map(all.filter(({ ch }) => ch.chno != null).map(({ ch, country }) => [`${country.id}/${ch.name}`, ch.chno]));
+  for (const [id, { ch: listed, country, regions }] of channels) {
     // Service-based countries have no cities: names stay as they are.
-    const place = country.regions ? placeChannel(ch, regions, country.regions) : { kind: "service", name: ch.name };
+    const place = country.regions ? placeChannel(listed, regions, country.regions) : { kind: "service", name: listed.name };
+    const ch = place.kind === "other" ? withSharedNumber(listed, (name) => numbers.get(`${country.id}/${name}`)) : listed;
     const meta = toMeta(country.id, ch, {
       name: place.name,
       poster: posters.get(ch.logo),
@@ -165,7 +170,7 @@ export async function build({
       const mine = entries.filter((e) => e.country === country).sort(catalogOrder);
       options = filterOptions(country, labels);
       lists = {
-        [labels.city]: mine,
+        [labels.all]: mine,
         [labels.other]: mine.filter((e) => e.place.kind === "other"),
         ...Object.fromEntries(country.regions.map((region) =>
           [region, mine.filter((e) => e.place.kind !== "other" && e.regions.includes(region))])),
@@ -173,9 +178,9 @@ export async function build({
     } else {
       // Already in source order, each source in channel-number order.
       const mine = entries.filter((e) => e.country === country);
-      options = groupOptions(mine.map((e) => e.ch), country.filterLabel || labels.genre, labels.other);
+      options = groupOptions(mine.map((e) => e.ch), labels.all, labels.other);
       lists = {
-        [options[0]]: mine,
+        [labels.all]: [...mine].sort((a, b) => listTier(a.ch) - listTier(b.ch)),
         [labels.other]: mine.filter((e) => isOther(e.ch.group, labels.other)),
         ...Object.fromEntries(options.slice(1).filter((g) => g !== labels.other)
           .map((group) => [group, mine.filter((e) => e.ch.group === group)])),
@@ -231,7 +236,7 @@ function sitePage(base, manifest, perCountry, total) {
       layout: "grid",
       choices: perCountry.map(({ country, count }) => ({ badge: country.id.toUpperCase(), label: country.name, detail: count.toLocaleString("en-US") })),
     }],
-    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown, then a city or genre. Australia opens on every channel, and you can narrow it to your city.</p>
+    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown. Each one opens on <b>All</b>, and you can narrow it to a city or genre.</p>
 <p>Streams come from broadcasters' and free streaming services' own apps via <a href="https://i.mjh.nz/">i.mjh.nz</a>. Australian and New Zealand broadcasters' channels only play from inside that country.</p>`,
     links: [{ label: "Build report", href: "report.json" }],
   });

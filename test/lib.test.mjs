@@ -2,8 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   availability, buildManifest, catalogOrder, catalogPaths, cleanGroup, filterOptions, groupOptions, isGenericTitle,
-  mergeHistory, placeChannel, recentlyAired, regionChannels, serviceChannels, showTitle, toMeta, toStream, tvChannels,
-  valueSpellings,
+  listTier, mergeHistory, placeChannel, recentlyAired, regionChannels, serviceChannels, showTitle, toMeta, toStream, tvChannels,
+  valueSpellings, withSharedNumber,
 } from "../src/lib.mjs";
 import { describe } from "../src/descriptions.mjs";
 
@@ -42,6 +42,27 @@ test("serviceChannels reads one region, drops DRM and excludes, and links throug
   assert.equal(serviceChannels(rokuJson, {}, roku)[0].group, "News");
   assert.equal(serviceChannels(rokuJson, { group: "Roku" }, roku)[0].group, "Roku");
   assert.deepEqual(serviceChannels({ regions: {} }, { region: "xx" }, service), []);
+  assert.equal(list[0].chno, undefined, "service numbers only set the order");
+  const renamed = serviceChannels({ channels: { s: { name: "S", group: "Sport" } } }, { rename: { Sport: "Sports" } }, roku);
+  assert.equal(renamed[0].group, "Sports");
+  const twice = { channels: {
+    a: { name: "CBS News Boston", chno: 1, group: "News + Opinion" },
+    b: { name: "CBS News Boston", chno: 2, group: "Local News" },
+  } };
+  assert.deepEqual(serviceChannels(twice, {}, roku).map((c) => c.key), ["rok-b"], "keeps the local copy");
+});
+
+test("listTier leads with numbered and news channels and ends with single-show ones", () => {
+  const mixed = [[1, "Show A"], [2, "Show B"], [3, "Show C"]];
+  const single = [[1, "Cheers S1 E1"], [2, "Cheers S1 E2"]];
+  for (const group of ["News", "News + Opinion", "Noticias", "Notícias", "Nachrichten", "Nyheter", "News e mondo"]) {
+    assert.equal(listTier({ group, programs: single }), 0, group);
+  }
+  assert.equal(listTier({ group: "Network", chno: 1, programs: single }), 0);
+  assert.equal(listTier({ group: "New on Pluto TV", programs: mixed }), 1);
+  assert.equal(listTier({ group: "Local News", programs: mixed }), 1);
+  assert.equal(listTier({ group: "Comedy" }), 1);
+  assert.equal(listTier({ group: "Comedy", programs: single }), 2);
 });
 
 test("groupOptions lists groups in first-use order with Other last", () => {
@@ -153,10 +174,23 @@ test("catalogOrder: numbers first (cities by population), then national by name,
     ["ABC Kids", "Seven (Sydney)", "Seven (Melbourne)", "All Saints", "Bondi Vet", "Seven Cairns"]);
 });
 
+test("regional feeds take their broadcast's number and sort after its city feeds", () => {
+  const numbers = { Seven: 71, "Channel 9": 91, "7two": 72 };
+  const shared = (name) => withSharedNumber({ name }, (n) => numbers[n]).chno;
+  assert.equal(shared("Seven Cairns"), 71);
+  assert.equal(shared("Channel 9 (Gold Coast)"), 91);
+  assert.equal(shared("7two Regional"), 72);
+  assert.equal(shared("Snowy Mountains Television"), undefined);
+  assert.equal(withSharedNumber({ name: "Seven Cairns", chno: 5 }, () => 71).chno, 5);
+  const e = (name, chno, kind, home = 0) => ({ ch: { chno }, place: { kind, name }, home });
+  const list = [e("Snowy", undefined, "other"), e("Seven Cairns", 71, "other", 2), e("Seven (Melbourne)", 71, "city", 1), e("7two", 72, "city")];
+  assert.deepEqual(list.sort(catalogOrder).map((x) => x.place.name), ["Seven (Melbourne)", "Seven Cairns", "7two", "Snowy"]);
+});
+
 test("manifest has one catalog per country with a required filter: all, regions, other", () => {
   const country = { id: "au", name: "Australia", regions: ["Sydney", "Brisbane"] };
-  const labels = { city: "City", other: "Other" };
-  assert.deepEqual(filterOptions(country, labels), ["City", "Sydney", "Brisbane", "Other"]);
+  const labels = { all: "All", other: "Other" };
+  assert.deepEqual(filterOptions(country, labels), ["All", "Sydney", "Brisbane", "Other"]);
   const m = buildManifest([{ id: "au", name: "Australia", options: filterOptions(country, labels) }]);
   assert.deepEqual(m.types, ["channels"]);
   assert.deepEqual(m.resources, ["catalog", "meta", "stream"]);
@@ -164,7 +198,7 @@ test("manifest has one catalog per country with a required filter: all, regions,
   assert.equal(m.catalogs.length, 1);
   const [c] = m.catalogs;
   assert.equal(c.name, "Australia");
-  assert.deepEqual(c.extra, [{ name: "genre", options: ["City", "Sydney", "Brisbane", "Other"], isRequired: true }]);
+  assert.deepEqual(c.extra, [{ name: "genre", options: ["All", "Sydney", "Brisbane", "Other"], isRequired: true }]);
   assert.deepEqual(c.genres, c.extra[0].options);
   assert.deepEqual(c.extraRequired, ["genre"]);
 });

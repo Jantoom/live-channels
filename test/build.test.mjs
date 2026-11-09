@@ -21,12 +21,12 @@ const fast = { regions: { us: { channels: {
   a: { name: "News Now", chno: 2, group: "News", programs: [[NOW - 600, "Headlines"]] },
   b: { name: "Movies 1", chno: 1, group: "Movies" },
   c: { name: "Locked", chno: 4, group: "Movies", license_url: "https://drm.test" },
-  d: { name: "Odd", chno: 3, group: "" },
+  d: { name: "Odd", chno: 3, group: "", programs: [[NOW - 7200, "Odd Show"], [NOW - 3600, "Odd Show"]] },
 } } } };
 const mono = { channels: { m1: { name: "News Now", groups: ["News"] }, m2: { name: "Mono Show", chno: 9, groups: ["Drama"] } } };
 const config = {
   exclude: [], minChannelsPerRegion: 2,
-  filterLabels: { city: "City", genre: "Genre", other: "Other" },
+  filterLabels: { all: "All", other: "Other" },
 };
 
 const national = {
@@ -44,6 +44,7 @@ const data = {
     ...national,
     "mjh-seven-syd": { name: "Seven", network: "Seven", chno: 71, mjh_master: "https://i.mjh.nz/.r/seven-syd.m3u8" },
     "mjh-flaky": { name: "Flaky", network: "Ten", mjh_master: "https://i.mjh.nz/.r/flaky.m3u8" },
+    "mjh-seven-cns": { name: "Seven Cairns", network: "Seven", mjh_master: "https://i.mjh.nz/.r/seven-cns.m3u8" },
   },
 };
 const previousHistory = { "livetv-au-mjh-abc": [[NOW - 2 * 86400, "Gardening Australia"]] };
@@ -75,16 +76,18 @@ const run = async (opts = {}) => {
 
 test("builds catalogs per region, one meta and stream per channel", async () => {
   const { outDir, report } = await run();
-  assert.equal(report.channels, 8);
+  assert.equal(report.channels, 9);
 
   const names = async (option) => (await read(outDir, `catalog/channels/au/genre=${option}.json`)).metas.map((m) => m.name);
   assert.deepEqual(await names("Brisbane"), ["ABC TV", "10 (Brisbane)"]);
   assert.deepEqual(await names("Sydney"), ["ABC TV", "Seven (Sydney)"], "regional feeds stay out of city lists");
-  assert.deepEqual(await names("Other"), ["Flaky"]);
-  assert.deepEqual(await names("City"), ["ABC TV", "10 (Brisbane)", "Seven (Sydney)", "Flaky"]);
-  assert.deepEqual(await read(outDir, "catalog/channels/au.json"), await read(outDir, "catalog/channels/au/genre=City.json"),
+  assert.deepEqual(await names("Other"), ["Seven Cairns", "Flaky"], "regional feeds with a shared number come first");
+  assert.deepEqual(await names("All"), ["ABC TV", "10 (Brisbane)", "Seven (Sydney)", "Seven Cairns", "Flaky"]);
+  assert.equal((await read(outDir, "meta/channels/livetv-au-mjh-seven-cns.json")).meta.releaseInfo, "Channel 71");
+  assert.equal((await read(outDir, "meta/channels/livetv-au-mjh-flaky.json")).meta.releaseInfo, undefined);
+  assert.deepEqual(await read(outDir, "catalog/channels/au.json"), await read(outDir, "catalog/channels/au/genre=All.json"),
     "no filter falls back to the all-channels list");
-  assert.deepEqual((await read(outDir, "manifest.json")).catalogs[0].extra[0].options, ["City", "Brisbane", "Sydney", "Other"]);
+  assert.deepEqual((await read(outDir, "manifest.json")).catalogs[0].extra[0].options, ["All", "Brisbane", "Sydney", "Other"]);
   assert.equal((await read(outDir, "manifest.json")).catalogs[0].type, "channels");
 
   const abc = await read(outDir, "stream/channels/livetv-au-mjh-abc.json");
@@ -100,9 +103,10 @@ test("service countries list each source's channels by group, minus DRM and dupl
   const { outDir, report } = await run();
   const manifest = await read(outDir, "manifest.json");
   assert.deepEqual(manifest.catalogs.map((c) => c.name), ["Australia", "United States"]);
-  assert.deepEqual(manifest.catalogs[1].extra[0].options, ["Genre", "Movies", "News", "Mono TV", "Other"]);
+  assert.deepEqual(manifest.catalogs[1].extra[0].options, ["All", "Movies", "News", "Mono TV", "Other"]);
   const names = async (option) => (await read(outDir, `catalog/channels/us/genre=${option}.json`)).metas.map((m) => m.name);
-  assert.deepEqual(await names("Genre"), ["Movies 1", "News Now", "Odd", "Mono Show"]);
+  assert.deepEqual(await names("All"), ["News Now", "Movies 1", "Mono Show", "Odd"], "news first, single-show channels last");
+  assert.equal((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.releaseInfo, undefined, "service numbers stay hidden");
   assert.deepEqual(await names("News"), ["News Now"]);
   assert.deepEqual(await names("Mono%20TV"), ["Mono Show"]);
   assert.deepEqual(await names("Other"), ["Odd"]);
