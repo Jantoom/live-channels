@@ -15,7 +15,7 @@ const countries = [
   { id: "us", name: "United States", sources: [{ service: "Fast", region: "us" }, { service: "Mono", group: "Mono TV" }] },
 ];
 const services = {
-  Fast: { name: "Fast TV", prefix: "f", channels: "https://fake.test/fast.json", stream: "https://jmp.test/f-{id}.m3u8" },
+  Fast: { name: "Fast TV", prefix: "f", channels: "https://fake.test/fast.json", stream: "https://jmp.test/f-{id}.m3u8", guide: "https://fake.test/fast/{region}.xml.gz" },
   Mono: { name: "Mono", prefix: "m", channels: "https://fake.test/mono.json", stream: "https://jmp.test/m-{id}.m3u8" },
 };
 const fast = { regions: { us: { channels: {
@@ -57,6 +57,8 @@ const epg = gzipSync(`<tv>
   <programme start="${xt(NOW + 1800)}" stop="${xt(NOW + 5400)}" channel="mjh-abc"><title>Later Show</title></programme>
   <programme start="${xt(NOW + 3 * 86400)}" stop="${xt(NOW + 3 * 86400 + 600)}" channel="mjh-abc"><title>Too Far</title></programme>
 </tv>`);
+// The service guide uses the service's own ids ("a"), not the addon's ("f-a").
+const fastEpg = gzipSync(`<tv><programme start="${xt(NOW - 600)}" stop="${xt(NOW + 600)}" channel="a"><title>Headlines</title></programme></tv>`);
 const previousHistory = { "livetv-au-mjh-abc": [[NOW - 2 * 86400, "Gardening Australia"]] };
 
 const wideLogo = await sharp({ create: { width: 300, height: 100, channels: 4, background: "#ff0000" } }).png().toBuffer();
@@ -70,6 +72,7 @@ const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (i
   if (region) { const body = region in regions ? regions[region] : data[region]; return body ? json(body) : notFound; }
   if (url === services.Fast.channels) return json(fast);
   if (url === services.Mono.channels) return json(mono);
+  if (url === "https://fake.test/fast/us.xml.gz") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => fastEpg };
   if (url === "https://fake.test/au/Brisbane/epg.xml.gz") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => epg };
   if (url.endsWith("/history.json")) return history ? json(history) : notFound;
   if (url === "https://logos.test/abc.png") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => wideLogo };
@@ -159,22 +162,26 @@ test("refuses to publish when a region comes back short", async () => {
   await assert.rejects(run({ regions: { Sydney: national } }), /Sydney has only 1 channels/);
 });
 
-test("Australia gets a programme guide: EPG manifest, live metas, and date pages per city", async () => {
+test("programme guides: EPG manifest, live metas, and date pages per city or group", async () => {
   const { outDir, report } = await run();
   const manifest = await read(outDir, "manifest.json");
   assert.equal(manifest.behaviorHints.epgProvider, true);
   assert.deepEqual(manifest.catalogs[0].extra.map((e) => e.name), ["genre", "date"]);
-  assert.equal(manifest.catalogs[1].extra.length, 1, "only guide countries take a date");
+  assert.deepEqual(manifest.catalogs[1].extra.map((e) => e.name), ["genre", "date"], "a service guide counts too");
   assert.ok(report.warnings.some((w) => w.startsWith("Australia / Sydney: no programme guide")), "a missing guide only warns");
-  assert.equal(report.guideChannels, 1);
+  assert.equal(report.guideChannels, 2);
+  assert.deepEqual(report.guide, { "Australia / Brisbane": 1, "United States / Fast TV": 1 });
 
   const abc = (await read(outDir, "meta/channels/livetv-au-mjh-abc.json")).meta;
   assert.equal(abc.behaviorHints.isLive, true);
   assert.deepEqual(abc.videos.map((v) => v.title), ["Gardening Australia", "Later Show"], "the meta carries the next 48 hours");
-  assert.equal(abc.videos[0].id, `livetv-au-mjh-abc:epg:${new Date((NOW - 1800) * 1000).toISOString()}`);
+  assert.equal(abc.videos[0].id, `livetv-au-mjh-abc:epg:${NOW - 1800}`);
   const seven = (await read(outDir, "meta/channels/livetv-au-mjh-seven-syd.json")).meta;
   assert.deepEqual(seven.videos, [], "no guide data: live, with an empty schedule");
-  assert.equal((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.videos, undefined, "other countries unchanged");
+  assert.deepEqual((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.videos.map((v) => v.title), ["Headlines"]);
+  assert.deepEqual((await read(outDir, "meta/channels/livetv-us-m-m2.json")).meta.videos, [], "a source without a guide: live, empty");
+  const news = await read(outDir, "catalog/channels/us/date=2033-05-18&genre=News.json");
+  assert.deepEqual(news.metasDetailed.map((m) => [m.name, m.videos.length]), [["News Now", 1]]);
 
   const list = await read(outDir, "catalog/channels/au/genre=Brisbane.json");
   assert.equal(list.metas[0].videos, undefined, "the plain list leaves the schedule out");
@@ -191,5 +198,7 @@ test("Australia gets a programme guide: EPG manifest, live metas, and date pages
     }
   }
   assert.ok(!existsSync(join(outDir, "catalog/channels/au/date=2033-05-20&genre=All.json")));
-  assert.ok(!existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=All.json")));
+  assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono%20TV.json")), "encoded spelling");
+  assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono TV.json")), "decoded spelling");
+  assert.ok(!existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono+TV.json")), "no form spellings");
 });

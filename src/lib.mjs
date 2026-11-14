@@ -44,6 +44,7 @@ export function serviceChannels(json, source, service, exclude = []) {
       const group = ch.group ?? ch.groups?.[0];
       return {
         key,
+        guideId: id, // the service's own id, which its XMLTV guide uses
         name: ch.name.trim(),
         logo: ch.logo,
         description: ch.description,
@@ -246,19 +247,23 @@ const isEpisodeNumber = (s) => /^(?:episode|ep\.?)\s*\d+(?:\s+of\s+(?:season|ser
 
 const iso = (t) => new Date(t * 1000).toISOString();
 
-/** A guide programme as a Stremio video. Playback stays on the channel's own id. */
+/**
+ * A guide programme as a Stremio video. Playback stays on the channel's own id.
+ * Kept lean, since a day's guide for a big country runs to megabytes: the id
+ * uses the unix start time, and the optional runtime is left out (the grid
+ * works it out from the start and end times).
+ */
 export function toProgramme(channelId, p) {
   const sub = p.subTitle && !isEpisodeNumber(p.subTitle) && p.subTitle !== p.title ? p.subTitle : "";
   const startTime = iso(p.start);
   return {
-    id: `${channelId}:epg:${startTime}`,
+    id: `${channelId}:epg:${p.start}`,
     title: p.title,
     released: startTime,
     startTime,
     endTime: iso(p.stop),
     overview: [sub, p.desc].filter(Boolean).join("\n") || undefined,
     thumbnail: p.icon || undefined,
-    runtime: `${Math.round((p.stop - p.start) / 60)} min`,
     genres: p.categories?.length ? p.categories : undefined,
   };
 }
@@ -363,17 +368,21 @@ export function catalogPaths(countryId, option, isDefault) {
 }
 
 /**
- * A guide page's files. Stremio puts the date first ("date=2026-11-14&genre=Sydney"):
- * stremio-core's ExtraExt::extend_one prepends the extra it adds.
+ * A guide page's files. Only stremio-core's apps ask for guide pages, so unlike
+ * the lists they need just its spelling: the date first
+ * ("date=2026-11-14&genre=Sydney", as ExtraExt::extend_one prepends the extra it
+ * adds) and values encoded like encodeURIComponent (URI_COMPONENT_ENCODE_SET).
+ * Hosts that decode the path, like GitHub Pages, look for the plain value.
  */
 export function guidePaths(countryId, option, date) {
-  return valueSpellings(option).map((v) => `catalog/${TYPE}/${countryId}/date=${date}&genre=${v}.json`);
+  return [...new Set([option, encodeURIComponent(option)])]
+    .map((v) => `catalog/${TYPE}/${countryId}/date=${date}&genre=${v}.json`);
 }
 
 // Bump when the manifest changes so installed copies refresh.
 // catalogs: [{ id, name, options, guide }], one per country; `guide` catalogs
 // also take a `date` (optional, so Discover can still list channels without one).
-export function buildManifest(catalogs, version = "2.2.0") {
+export function buildManifest(catalogs, version = "2.3.0") {
   return {
     id: "community.live-channels",
     version,

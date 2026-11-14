@@ -72,10 +72,35 @@ export async function build({
   // channels: id -> { ch, country, regions[] }, so a national channel that
   // appears in every city gets one meta and one stream file.
   const channels = new Map();
-  // guide: addon id -> programmes, for countries with a `guide`. The cities share
-  // national channels; the first city's copy is kept.
+  // guide: addon id -> programmes. Australia's cities share national channels;
+  // the first city's copy is kept. A guide file is fetched and parsed once (Roku's
+  // covers all its channels; Pluto TV has one per country).
   const guide = new Map();
+  const guided = new Set(); // ids of countries with a guide
   const report = { builtAt: new Date(now * 1000).toISOString(), countries: {} };
+  const guideFiles = new Map();
+  const getGuide = (url) => {
+    if (!guideFiles.has(url)) guideFiles.set(url, getText(url).then(parseXmltv));
+    return guideFiles.get(url);
+  };
+  // A missing guide only warns: the channels still play without one.
+  async function addGuide(country, label, url, list) {
+    guided.add(country.id);
+    try {
+      const programmes = await getGuide(url);
+      let found = 0;
+      for (const ch of list) {
+        const p = programmes.get(ch.guideId ?? ch.key);
+        if (!p) continue;
+        found++;
+        const id = metaId(country.id, ch.key);
+        if (!guide.has(id)) guide.set(id, p);
+      }
+      (report.guide ??= {})[`${country.name} / ${label}`] = found;
+    } catch (err) {
+      warn(`${country.name} / ${label}: no programme guide (${err.message}).`);
+    }
+  }
 
   for (const country of countries) {
     const counts = report.countries[country.name] = {};
@@ -83,22 +108,7 @@ export async function build({
       for (const region of country.regions) {
         const list = regionChannels(await getJson(`${country.source}/${region}/tv.json`), config.exclude);
         checkSize(`${country.name} / ${region}`, list);
-        if (country.guide) {
-          // A missing guide only warns: the channels still play without one.
-          try {
-            const programmes = parseXmltv(await getText(`${country.source}/${region}/${country.guide}`));
-            let found = 0;
-            for (const ch of list) {
-              const id = metaId(country.id, ch.key);
-              if (!programmes.has(ch.key)) continue;
-              found++;
-              if (!guide.has(id)) guide.set(id, programmes.get(ch.key));
-            }
-            (report.guide ??= {})[`${country.name} / ${region}`] = found;
-          } catch (err) {
-            warn(`${country.name} / ${region}: no programme guide (${err.message}).`);
-          }
-        }
+        if (country.guide) await addGuide(country, region, `${country.source}/${region}/${country.guide}`, list);
         for (const ch of list) {
           const id = metaId(country.id, ch.key);
           if (!channels.has(id)) channels.set(id, { ch, country, regions: [] });
@@ -111,17 +121,20 @@ export async function build({
     }
     const names = new Set();
     for (const source of country.sources) {
-      let list, label;
+      let list, label, guideUrl;
       if (source.tv) {
         list = tvChannels(await getJson(source.tv), config.exclude);
         label = "i.mjh.nz";
+        guideUrl = source.guide;
       } else {
         const service = services[source.service];
         if (!service) throw new Error(`${country.name}: unknown service "${source.service}".`);
         list = serviceChannels(await getShared(service.channels), source, service, config.exclude);
         label = service.name;
+        guideUrl = service.guide?.replace("{region}", source.region ?? "all");
       }
       checkSize(`${country.name} / ${label}`, list);
+      if (guideUrl) await addGuide(country, label, guideUrl, list);
       let added = 0;
       for (const ch of list) {
         if (names.has(ch.name.toLowerCase())) continue;
@@ -180,7 +193,7 @@ export async function build({
       name: place.name,
       poster: posters.get(ch.logo),
       recent: recentlyAired(history[id], now, ch.name),
-      videos: country.guide
+      videos: guided.has(country.id)
         ? programmesBetween(guide.get(id), now - past * 3600, now + ahead * 3600).map((p) => toProgramme(id, p))
         : undefined,
     });
@@ -222,7 +235,7 @@ export async function build({
       for (const rel of catalogPaths(country.id, option, option === options[0])) {
         await writeJson(rel, { metas }); files++;
       }
-      if (!country.guide) continue;
+      if (!guided.has(country.id)) continue;
       for (const date of guideDates(now, config.guideDays)) {
         const metasDetailed = lists[option].map((e) => guideRow(e.meta, guide.get(e.meta.id), date));
         for (const rel of guidePaths(country.id, option, date)) {
@@ -231,7 +244,7 @@ export async function build({
       }
     }
     if (lists[labels.other].length) report.countries[country.name][labels.other] = lists[labels.other].length;
-    catalogs.push({ id: country.id, name: country.name, options, guide: Boolean(country.guide) });
+    catalogs.push({ id: country.id, name: country.name, options, guide: guided.has(country.id) });
   }
 
   const manifest = buildManifest(catalogs);
@@ -244,7 +257,7 @@ export async function build({
     channels: channels.size,
     posters: posters.size,
     historyPrograms: Object.values(history).reduce((n, e) => n + e.length, 0),
-    guideChannels: guide.size,
+    guideChannels: [...channels.keys()].filter((id) => guide.has(id)).length,
     warnings,
   });
   await writeJson("report.json", report);
@@ -275,7 +288,7 @@ function sitePage(base, manifest, perCountry, total) {
       layout: "grid",
       choices: perCountry.map(({ country, count }) => ({ badge: country.id.toUpperCase(), label: country.name, detail: count.toLocaleString("en-US") })),
     }],
-    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown. Each one opens on <b>All</b>, and you can narrow it to a city or genre. Australia opens as a TV guide in Stremio's newer apps, with a week of programmes.</p>
+    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown. Each one opens on <b>All</b>, and you can narrow it to a city or genre. In Stremio's newer apps each one opens as a TV guide showing what's on.</p>
 <p>Streams come from broadcasters' and free streaming services' own apps via <a href="https://i.mjh.nz/">i.mjh.nz</a>. Australian and New Zealand broadcasters' channels only play from inside that country.</p>`,
     links: [{ label: "Build report", href: "report.json" }],
   });

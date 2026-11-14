@@ -246,14 +246,13 @@ test("parseXmltv reads programmes by channel, in start order, with times in UTC"
 test("programmes become Stremio videos with start and end times; episode-number sub-titles are dropped", () => {
   const [morning, racing] = parseXmltv(XMLTV).get("mjh-seven-syd");
   assert.deepEqual(toProgramme("livetv-au-mjh-seven-syd", racing), {
-    id: "livetv-au-mjh-seven-syd:epg:2026-11-14T01:00:00.000Z",
+    id: `livetv-au-mjh-seven-syd:epg:${Date.UTC(2026, 10, 14, 1) / 1000}`,
     title: "Seven's Horse Racing",
     released: "2026-11-14T01:00:00.000Z",
     startTime: "2026-11-14T01:00:00.000Z",
     endTime: "2026-11-14T06:00:00.000Z",
     overview: "Newcastle/Sandown\nLive coverage & more.",
     thumbnail: "https://img.test/a?x=1&y=2",
-    runtime: "300 min",
     genres: ["Sports"],
   });
   assert.equal(toProgramme("x", morning).overview, undefined);
@@ -273,6 +272,10 @@ test("guide pages: UTC days around now, programmes overlapping the day, date-fir
   assert.equal(day13.description, undefined, "rows stay lean");
   assert.deepEqual(day13.behaviorHints, { isLive: true, hasScheduledVideos: true });
   assert.deepEqual(guidePaths("au", "Sydney", "2026-11-14"), ["catalog/channels/au/date=2026-11-14&genre=Sydney.json"]);
+  assert.deepEqual(guidePaths("us", "News + Opinion", "2026-11-14"), [
+    "catalog/channels/us/date=2026-11-14&genre=News + Opinion.json",
+    "catalog/channels/us/date=2026-11-14&genre=News%20%2B%20Opinion.json",
+  ]);
 });
 
 test("toMeta with a schedule marks the channel live", () => {

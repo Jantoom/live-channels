@@ -17,7 +17,8 @@
 //     { service, region }  a free streaming service's lineup for one country;
 //                          `rename` merges its group names with another source's
 //     { service, group }   a single-region service, all filed under one option
-//     { tv }               a single i.mjh.nz tv.json, grouped by network
+//     { tv, guide }        a single i.mjh.nz tv.json, grouped by network, and its
+//                          XMLTV programme guide
 //   After "all", the dropdown lists the services' own groups. A channel two
 //   sources share by name is only listed from the first.
 
@@ -29,9 +30,10 @@ export const countries = [
     // after the first one ("Seven (Sydney)" also serves Canberra).
     source: "https://i.mjh.nz/au",
     regions: ["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Canberra", "Hobart", "Darwin"],
-    // Programme guide: i.mjh.nz's XMLTV file in each region's folder. Turns the
-    // catalog into Stremio's TV guide grid (Discover, day by day), filtered by
-    // the same city dropdown. Remove to go back to a plain channel list.
+    // Programme guide: i.mjh.nz's XMLTV file in each region's folder. Any guide
+    // (here, or on a service or tv source) turns the country's catalog into
+    // Stremio's TV guide grid (Discover, day by day), filtered by the same
+    // dropdown. Remove them all to go back to a plain channel list.
     guide: "epg.xml.gz",
   },
   // The rest, from most to least populous.
@@ -50,17 +52,18 @@ export const countries = [
   { id: "se", name: "Sweden", sources: [{ service: "PlutoTV", region: "se" }] },
   { id: "dk", name: "Denmark", sources: [{ service: "PlutoTV", region: "dk" }] },
   { id: "no", name: "Norway", sources: [{ service: "PlutoTV", region: "no" }] },
-  { id: "nz", name: "New Zealand", sources: [{ tv: "https://i.mjh.nz/nz/tv.json" }] },
+  { id: "nz", name: "New Zealand", sources: [{ tv: "https://i.mjh.nz/nz/tv.json", guide: "https://i.mjh.nz/nz/epg.xml.gz" }] },
 ];
 
 // Free streaming services i.mjh.nz lists channels for. Keys are what `service`
-// refers to above; `prefix` starts each channel's id. Samsung TV Plus is only
+// refers to above; `prefix` starts each channel's id. `guide` is the service's
+// XMLTV programme guide ({region} is the source's region, or "all"). Samsung TV Plus is only
 // used for the UK: most of its US channels refuse viewers outside the US, and
 // it adds little people would recognise there.
 export const services = {
-  SamsungTVPlus: { name: "Samsung TV Plus", prefix: "stvp", channels: "https://i.mjh.nz/SamsungTVPlus/.channels.json", stream: "https://jmp2.uk/stvp-{id}" },
-  PlutoTV: { name: "Pluto TV", prefix: "plu", channels: "https://i.mjh.nz/PlutoTV/.channels.json", stream: "https://jmp2.uk/plu-{id}.m3u8" },
-  Roku: { name: "The Roku Channel", prefix: "rok", channels: "https://i.mjh.nz/Roku/.channels.json", stream: "https://jmp2.uk/rok-{id}.m3u8" },
+  SamsungTVPlus: { name: "Samsung TV Plus", prefix: "stvp", channels: "https://i.mjh.nz/SamsungTVPlus/.channels.json", stream: "https://jmp2.uk/stvp-{id}", guide: "https://i.mjh.nz/SamsungTVPlus/{region}.xml.gz" },
+  PlutoTV: { name: "Pluto TV", prefix: "plu", channels: "https://i.mjh.nz/PlutoTV/.channels.json", stream: "https://jmp2.uk/plu-{id}.m3u8", guide: "https://i.mjh.nz/PlutoTV/{region}.xml.gz" },
+  Roku: { name: "The Roku Channel", prefix: "rok", channels: "https://i.mjh.nz/Roku/.channels.json", stream: "https://jmp2.uk/rok-{id}.m3u8", guide: "https://i.mjh.nz/Roku/all.xml.gz" },
 };
 
 export const config = {
@@ -76,5 +79,5 @@ export const config = {
   // the channels, just without programmes, rather than showing an error.
   guideDays: { past: 7, ahead: 10 },
   // How much of the guide each channel's own page carries, in hours from the build.
-  guideMetaHours: { past: 6, ahead: 48 },
+  guideMetaHours: { past: 3, ahead: 24 },
 };
