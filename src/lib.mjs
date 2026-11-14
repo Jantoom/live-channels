@@ -194,6 +194,100 @@ export function recentlyAired(entries = [], now, channelName = "", max = 10) {
     .map((s) => s.title);
 }
 
+// Channels that look single-show but aren't a show you could watch elsewhere:
+// news, music, sport and racing, live streams, parliament, tourism, movies.
+// News is matched in the services' languages too (their groups: Noticias, Nyheter…).
+const NOT_A_SHOW = /news|noticias|notícias|nachrichten|nyheter|nyheder|notizie|music|sport|golf|weather|current affairs|parliament|racing|special interest|\bmovies?\b|\bfilms?\b|cinema|\blive\b/i;
+// Pluto TV files plenty of reality series (Ice Road Truckers, The Challenge)
+// under "News & Information", so that genre alone doesn't make a channel news.
+const LOOSE_GENRE = /^news & information$/i;
+
+/**
+ * The series a programme belongs to, from its image, for guides that title
+ * programmes by episode ("Lone Wolf" on the NCIS channel): tvapi.com.au codes
+ * ("NCIL03-004" → NCIL), Pluto TV series ids, and 10's images (one per show).
+ * Other images aren't trusted (Samsung TV Plus often uses one image for a whole
+ * channel), so those fall back to the normalised title.
+ */
+export function seriesKey(p) {
+  const url = p.icon || "";
+  const tvapi = url.match(/tvapi\.com\.au\/images\/([A-Z]+?)\d*-/i);
+  if (tvapi) return "tvapi:" + tvapi[1].toUpperCase();
+  const pluto = url.match(/\/series\/([0-9a-f]{24})\//);
+  if (pluto) return "pluto:" + pluto[1];
+  if (/10-static-assets\./.test(url)) return url.split("?")[0];
+  return "title:" + showTitle(p.title);
+}
+
+/** "Judge Judy: Episode 42" → "Judge Judy" (Pluto TV's "Show: Episode" titles). */
+const titlePrefix = (title) => title.split(": ")[0];
+
+/**
+ * The show a 24/7 single-show channel plays, or null. Judged on the guide's
+ * programmes in [from, to) by airtime: the top show must fill `share` of it,
+ * matched by title (normalised, so "Cops S3 Ep. 4" counts as Cops), by title
+ * prefix ("Judge Judy: Episode 42"), or by seriesKey (guides titled by episode).
+ *
+ * With under `minHours` of guide (Seven's 24/7 channels list about 2 hours):
+ * - one recognised series across at least two programmes counts if the week's
+ *   history ([[start, title]…], titles normalised) is all different episode
+ *   titles (top title under `episodeShare`), or the guide's titles are bare
+ *   episode slots ("Season 4 Ep 2"). A mixed channel repeats its show titles.
+ * - otherwise the history is judged like the guide, by count, if it has
+ *   `minAirings` entries.
+ * Channels whose name, group, programme genres or top title say news, music,
+ * sport, live etc. are never single-show.
+ */
+export function singleShow(ch, programmes = [], from, to,
+  { share = 0.95, minHours = 6, minAirings = 8, episodeShare = 0.15 } = {}, history = []) {
+  const name = ch.name.trim();
+  const byTitle = new Map(), byPrefix = new Map(), bySeries = new Map(), genres = new Set();
+  const add = (map, key, n) => map.set(key, (map.get(key) || 0) + n);
+  const best = (map) => [...map].sort((x, y) => y[1] - x[1])[0] || [null, 0];
+  const window = programmesBetween(programmes, from, to);
+  let total = 0;
+  for (const p of window) {
+    const mins = (Math.min(p.stop, to) - Math.max(p.start, from)) / 60;
+    const title = showTitle(p.title);
+    add(byTitle, title, mins);
+    add(byPrefix, titlePrefix(title), mins);
+    add(bySeries, seriesKey(p), mins);
+    total += mins;
+    for (const g of p.categories || []) if (!LOOSE_GENRE.test(g)) genres.add(g);
+  }
+  const notAShow = (top) => [name, ch.group, top, ...genres].some((x) => x && NOT_A_SHOW.test(x));
+
+  if (total < minHours * 60) {
+    const [series, seriesMins] = best(bySeries);
+    if (window.length >= 2 && total && seriesMins / total >= share && !series.startsWith("title:")) {
+      const counts = new Map();
+      for (const [, title] of history) add(counts, titlePrefix(title), 1);
+      const episodic = history.length >= minAirings
+        ? best(counts)[1] / history.length <= episodeShare
+        : window.every((p) => isGenericTitle(showTitle(p.title)));
+      if (episodic) return notAShow(name) ? null : name;
+    }
+    if (history.length < minAirings) return null;
+    byTitle.clear(); byPrefix.clear(); bySeries.clear();
+    for (const [, title] of history) { add(byTitle, title, 1); add(byPrefix, titlePrefix(title), 1); }
+    total = history.length;
+  }
+
+  let [top, mins] = best(byTitle);
+  if (mins / total < share) [top, mins] = best(byPrefix);
+  if (mins / total < share && bySeries.size) {
+    // A network feed filed under one series id titles some slots with its own
+    // name among unrelated shows (Pluto's Azteca Internacional): not one show.
+    const lower = name.toLowerCase();
+    const others = [...byTitle].filter(([t]) => !t.toLowerCase().startsWith(lower)).reduce((n, [, m]) => n + m, 0);
+    const networkFeed = byTitle.has(name) && others / total > 1 - share;
+    const [, seriesMins] = best(bySeries);
+    if (!networkFeed && seriesMins / total >= share) [top, mins] = [name, seriesMins];
+  }
+  if (mins / total < share || notAShow(top)) return null;
+  return top;
+}
+
 /** Share of a channel's programs that are its most frequent show (1 = one show only). */
 export function topShowShare(programs = []) {
   const counts = {};

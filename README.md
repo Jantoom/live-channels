@@ -7,17 +7,17 @@ In Stremio: **Discover → channels**, then pick a country from the catalog drop
 **Australia** is organised by city:
 
 - **All** (the default): every channel. Each capital's own feeds are named after the city, e.g. "ABC TV (Brisbane)", so you can see which version you're watching. A feed shared by two cities is named after the bigger one: Canberra gets "Seven (Sydney)", Hobart gets "7two (Melbourne)".
-- **Sydney, Melbourne, Brisbane, Perth, Adelaide, Canberra, Hobart, Darwin** (most to least populous): the channels that city receives, one of each, in channel-number order, followed by the free streaming-only channels (Home and Away Classics, Bondi Vet, 9Crime, Sky News Now, etc.).
+- **Sydney, Melbourne, Brisbane, Perth, Adelaide, Canberra, Hobart, Darwin** (most to least populous): the channels that city receives, one of each, in channel-number order, followed by the free streaming-only channels (9Crime, Sky News Now, BBC News, Bloomberg, etc.).
 - **Other:** regional feeds outside the capitals, e.g. Seven Cairns and Channel 9 (Gold Coast). Most have no channel number in the source, so they take the number of the broadcast they carry (Seven Cairns is Channel 71) and appear in **All** right after that broadcast's city feeds.
 
-**The other countries** are organised by genre. **All** (the default) lists every channel: news first, then channels with a mix of shows, then 24/7 channels showing a single show. After it come the service's own groups in its guide order (Movies, Comedy, News + Opinion…, in the country's language). Countries are listed from most to least populous:
+**The other countries** are organised by genre. **All** (the default) lists every channel: news first, then channels with a mix of shows, then the few 24/7 single-show channels that are left (see below). After it come the service's own groups in its guide order (Movies, Comedy, News + Opinion…, in the country's language). Countries are listed from most to least populous:
 
 | Country | Channels from | About |
 |---|---|---|
-| United States | Pluto TV, then The Roku Channel (its own option in the dropdown) | 660 |
-| United Kingdom | Samsung TV Plus, then Pluto TV | 390 |
-| Brazil, Mexico, Germany, France, Italy, Spain, Argentina, Canada, Sweden, Denmark, Norway | Pluto TV | 130–275 each |
-| New Zealand | i.mjh.nz's free-to-air list, by network (TVNZ, Sky, Māori…) | 43 |
+| United States | Pluto TV, then The Roku Channel (its own option in the dropdown) | 430 |
+| United Kingdom | Samsung TV Plus, then Pluto TV | 260 |
+| Brazil, Mexico, Germany, France, Italy, Spain, Argentina, Canada, Sweden, Denmark, Norway | Pluto TV | 55–130 each |
+| New Zealand | i.mjh.nz's free-to-air list, by network (TVNZ, Sky, Māori…) | 37 |
 
 To set it up, follow [SETUP.md](SETUP.md).
 
@@ -40,8 +40,18 @@ How it works:
 - The guide files are fetched with the channel lists and matched by channel id. If one fails to download, the build warns and those channels go without programmes; the build still publishes.
 - The manifest sets `behaviorHints.epgProvider`, and each catalog takes an optional `date` extra. Channel metas are marked `isLive` (which is how Stremio treats them as live without switching the type to `tv`) and carry their programmes as `videos` with `startTime`/`endTime`.
 - Stremio asks for a guide page per UTC day: `catalog/channels/au/date=2026-11-14&genre=Sydney.json`. The date comes first and the value is encoded like `encodeURIComponent`, as Stremio sends it, so guide pages are only written in that spelling and the decoded one (unlike the lists, which cover every client's spelling). The build writes them for 7 days back to 10 days ahead; days with no data still list the channels.
-- The guide pages are most of the site: about 290 MB in all, of which a typical build's "today" pages are about 120 MB (the US "All" page is about 8 MB, much less gzipped). Programmes are kept lean (no runtime, short ids) to keep publishing quick; GitHub Pages has timed out publishing before.
+- The guide pages are most of the site: about 210 MB in all, of which a typical build's "today" pages are about 80 MB (the US "All" page is about 5 MB, much less gzipped). Programmes are kept lean (no runtime, short ids) to keep publishing quick; GitHub Pages has timed out publishing before.
 - The guide is only as fresh as the last build (every 6 hours). That's fine for scheduled programmes, but late schedule changes show up at the next build.
+
+## Channels left out: 24/7 single-show channels
+
+Channels that play one show around the clock (Seinfeld, Bondi Vet, Judge Judy, Forensic Files, South Park, Frasier…) are left out, about 1,700 of 3,500: Stremio can find the show itself, with every episode on demand. Roughly 40% of the streaming services' channels are like this. Australia loses about 70 (mostly 7plus, 9Now and 10's 24/7 channels), New Zealand 4.
+
+- **How a channel counts:** one show fills 95% of the next 24 hours of its guide. Shows are matched by title with the episode stripped ("Cops S3 Ep. 4" is Cops), by title prefix (Pluto TV's "Judge Judy: Episode 42"), or, for guides that title each slot by episode ("Lone Wolf" on an NCIS channel), by the series in the programme's image (tvapi.com.au series codes, Pluto TV series ids, 10's show images).
+- **Short guides:** Seven's 24/7 channels list only an hour or two. Those count when that stretch is one series and the week's "Recently aired" history is all different episode titles (a mixed channel repeats its show titles), or its titles are bare slots like "Season 4 Ep 2". Otherwise the history is judged like the guide.
+- **Always kept:** news (in the services' languages too: Noticias, Nyheter…), music, sport, racing, golf, weather, parliament, special-interest, movie and live channels, judged on the channel's name and group and its programmes' titles and genres. Pluto TV's "News & Information" genre doesn't count, because it files reality series like Ice Road Truckers under it.
+- **The hand-picked list:** `singleShow.names` in `channels.config.mjs` drops channels the data can't settle: no guide at all (9Now's Seinfeld, The Block 24/7, Married At First Sight), an hour of guide titled by episode (7plus's NCIS, Mythbusters), or one show plus its spin-offs (Baywatch with Baywatch Nights, Geordie Shore with Geordie OGs). `singleShow.keep` keeps a channel the rule gets wrong, like TV Cultura, a network feed whose guide titles every slot with its own name. Both take channel names (any country) or ids. A name that matches no channel shows up as a build warning, so a renamed channel gets noticed.
+- **What was dropped:** listed per country in `report.json` (`singleShow`), as "Channel (show)" or "Channel (listed)". `singleShow.drop: false` turns this off.
 
 ## Where the channels come from
 
@@ -61,7 +71,7 @@ Left out on purpose:
 
 - **Poster:** the channel's logo, redrawn centred on a transparent square so Stremio doesn't crop wide logos. Rendered posters are cached between builds (`.cache/posters`).
 - **Channel number** where the channel has a broadcast one, e.g. "Channel 10". The streaming services' own numbers aren't shown, because nobody knows them.
-- **Description:** the source's own description where it has one; otherwise a one-sentence description of the channel from `src/descriptions.mjs`, followed by **"Recently aired:"** with up to 10 shows from the past week. Shows aired on more days come first, so a regular series beats a one-off movie. Episode-slot titles ("Season 7 Episode 11") and the channel's own name are left out, so a single-show channel like Bondi Vet may have no list at all.
+- **Description:** the source's own description where it has one; otherwise a one-sentence description of the channel from `src/descriptions.mjs`, followed by **"Recently aired:"** with up to 10 shows from the past week. Shows aired on more days come first, so a regular series beats a one-off movie. Episode-slot titles ("Season 7 Episode 11") and the channel's own name are left out, so a channel built around one show may have no list at all.
 
 The schedules in i.mjh.nz's data only cover about the last 4 and next 9 hours. So the build runs every 6 hours and keeps a rolling 7-day history in `history.json`, which it publishes with the site and reads back on the next run. The "Recently aired" lists fill out over a few days.
 

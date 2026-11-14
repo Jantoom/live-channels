@@ -74,6 +74,42 @@ export const config = {
   // A city or source with fewer channels than this fails the build, so a bad
   // fetch can't replace the last good deployment with a near-empty list.
   minChannelsPerRegion: 20,
+  // 24/7 channels that only play one show (Bondi Vet, Judge Judy, Forensic
+  // Files…) are left out: Stremio can find the show itself. A channel counts
+  // when one show fills `share` of the next 24 hours of its guide, or, with
+  // under `minHours` of guide, of its past week's history (at least
+  // `minAirings` programmes). News, music, sport, racing, live and parliament
+  // channels always stay. `names` are dropped regardless: single-show channels
+  // the guide can't settle (no guide, or a spin-off mixed in). `keep` is kept
+  // regardless. Both take channel names as i.mjh.nz spells them (any country,
+  // any case) or ids (same form as `exclude`). report.json lists what was
+  // dropped, "(listed)" for `names`. drop: false turns it all off.
+  singleShow: {
+    drop: true, share: 0.95, minHours: 6, minAirings: 8,
+    names: [
+      // Australia: no guide at all
+      "Seinfeld", "The Block 24/7", "Married At First Sight", "Dance Moms 24/7", "60 Minutes Australia",
+      "BBC Top Gear", "BBC Antiques Roadshow", "Taronga 24/7", "Insight", "Dateline", "The Cook Up",
+      // Australia: about an hour of guide, titled by episode
+      "NCIS", "Mythbusters", "Kitchen Nightmares", "Hells Kitchen", "Below Deck Vault", "Wicked Tuna",
+      "Ghost Hunters", "Escape to the Country", "Botched VAULT", "Million Dollar Listing VAULT",
+      "The Real Housewives VAULT", "Winners & Losers", "Antiques Road Trip", "A Country Practice",
+      "Hardcore Pawn", "Home and Away Classics", "The Yorkshire Vet", "24 Hours in A&E",
+      "CSI Crime Scene Investigation", "Trucking Hell",
+      // One show plus its spin-offs or specials
+      "Undercover Boss", "Heartland", "Warner Bros TV House Hunters", "Baywatch", "Leave it to Bryan",
+      "Top Gear", "Unsolved Mysteries", "Geordie Shore", "COPS", "Mayday: Air Disaster", "Tiny House Nation",
+      "48 Hours", "PBS Nature", "Ghosts", "Bad Girls Club", "Garfield and Friends", "Cold Case Files by A&E",
+      "Matched Married Meet by Lifetime", "Highway Thru Hell", "Pitufo TV", "Go Go Gadget!",
+      "Profiling Paris", "Täterjagd", "Dating Naked UK", "The L Word – Wenn Frauen lieben",
+      "Die Sieben-Millionen-Dollar-Frau", "Saving Hope", "MTV Ridiculousness", "Germany Shore", "Red Shoe Diaries",
+      "MTV Jerseys", "Archivos Forenses", "Faites entrer l'accusé", "Beyblade", "Rugrats", "Captain Tsubasa",
+      "Hunter x Hunter", "MasterChef Colombia", "MTV Shore", "As Tartarugas Ninja", "Dora, A Aventureira",
+      "Caçadores de Óvnis", "Popeye", "Mais MasterChef Brasil", "Beavis and Butt-Head", "Jakt är Jakt", "Avatar",
+    ],
+    // A network feed whose guide titles every slot with its own name.
+    keep: ["TV Cultura", "Azteca UNO -1 hora"],
+  },
   // Guide pages are written for these UTC days around the build. The XMLTV data
   // runs about a week ahead and a few hours back; days outside it still list
   // the channels, just without programmes, rather than showing an error.

@@ -10,7 +10,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { countries as defaultCountries, config as defaultConfig, services as defaultServices } from "../channels.config.mjs";
 import {
   TYPE, availability, buildManifest, catalogOrder, catalogPaths, filterOptions, groupOptions, guideDates, guidePaths, guideRow,
-  isOther, listTier, mergeHistory, metaId, parseXmltv, placeChannel, programmesBetween, recentlyAired, regionChannels,
+  isOther, listTier, mergeHistory, metaId, parseXmltv, singleShow, placeChannel, programmesBetween, recentlyAired, regionChannels,
   serviceChannels, toMeta, toProgramme, toStream, tvChannels, withSharedNumber,
 } from "../src/lib.mjs";
 import { makePoster } from "../src/posters.mjs";
@@ -146,10 +146,10 @@ export async function build({
       log(`${country.name} / ${label}: ${added} channels`);
     }
   }
-  const all = [...channels.values()];
 
   // ---- 2. Schedule history --------------------------------------------------
   // Keyed by addon id: the services use the same channel ids in several countries.
+  // Merged for every channel, so one dropped below keeps its history.
   let previous = {};
   try {
     previous = await getJson(`${base}/history.json`);
@@ -158,6 +158,34 @@ export async function build({
   }
   const programs = Object.fromEntries([...channels].map(([id, { ch }]) => [id, ch.programs || []]));
   const history = mergeHistory(previous, programs, now);
+
+  // ---- 2b. Drop 24/7 single-show channels -----------------------------------
+  // A channel that only plays one show adds little: Stremio can find the show
+  // itself. Judged on the next day of the guide, or the past week's history
+  // where the guide is short (Seven's 24/7 channels list about 2 hours).
+  if (config.singleShow?.drop) {
+    // keep and names take channel names (any country, any case) or ids.
+    const used = new Set();
+    const listed = (list) => { const set = new Set((list || []).map((x) => x.toLowerCase())); return (id, ch, country) => {
+      const hit = [ch.name.trim().toLowerCase(), id.slice(metaId(country.id, "").length).toLowerCase()].find((k) => set.has(k));
+      if (hit) used.add(hit);
+      return Boolean(hit);
+    }; };
+    const kept = listed(config.singleShow.keep), named = listed(config.singleShow.names);
+    const dropped = report.singleShow = {};
+    for (const [id, { ch, country }] of channels) {
+      if (kept(id, ch, country)) continue;
+      const show = named(id, ch, country) ? "listed" : singleShow(ch, guide.get(id), now, now + 86400, config.singleShow, history[id]);
+      if (!show) continue;
+      channels.delete(id);
+      (dropped[country.name] ??= []).push(show === ch.name.trim() ? ch.name.trim() : `${ch.name.trim()} (${show})`);
+    }
+    const unused = [...(config.singleShow.names || []), ...(config.singleShow.keep || [])].filter((x) => !used.has(x.toLowerCase()));
+    if (unused.length) warn(`singleShow lists name no current channel: ${unused.join(", ")}.`);
+    const total = Object.values(dropped).reduce((n, list) => n + list.length, 0);
+    log(`Dropped ${total} single-show channels.`);
+  }
+  const all = [...channels.values()];
 
   // ---- 3. Posters and web playback -------------------------------------------
   await rm(outDir, { recursive: true, force: true });

@@ -58,7 +58,11 @@ const epg = gzipSync(`<tv>
   <programme start="${xt(NOW + 3 * 86400)}" stop="${xt(NOW + 3 * 86400 + 600)}" channel="mjh-abc"><title>Too Far</title></programme>
 </tv>`);
 // The service guide uses the service's own ids ("a"), not the addon's ("f-a").
-const fastEpg = gzipSync(`<tv><programme start="${xt(NOW - 600)}" stop="${xt(NOW + 600)}" channel="a"><title>Headlines</title></programme></tv>`);
+const fastEpg = gzipSync(`<tv>
+  <programme start="${xt(NOW - 600)}" stop="${xt(NOW + 86400)}" channel="a"><title>News Now</title></programme>
+  <programme start="${xt(NOW - 600)}" stop="${xt(NOW + 600)}" channel="d"><title>Odd Show S1 Ep. 1</title></programme>
+  <programme start="${xt(NOW + 600)}" stop="${xt(NOW + 86400)}" channel="d"><title>Odd Show S1 Ep. 2</title></programme>
+</tv>`);
 const previousHistory = { "livetv-au-mjh-abc": [[NOW - 2 * 86400, "Gardening Australia"]] };
 
 const wideLogo = await sharp({ create: { width: 300, height: 100, channels: 4, background: "#ff0000" } }).png().toBuffer();
@@ -81,10 +85,10 @@ const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (i
 };
 
 const read = async (dir, rel) => JSON.parse(await readFile(join(dir, rel), "utf8"));
-const run = async (opts = {}) => {
+const run = async (opts = {}, cfg = config) => {
   const outDir = await mkdtemp(join(tmpdir(), "live-channels-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "live-channels-cache-"));
-  const report = await build({ fetchImpl: fakeFetch(opts), countries, services, config, outDir, cacheDir, siteUrl: "https://site.test/", now: NOW, log: () => {} });
+  const report = await build({ fetchImpl: fakeFetch(opts), countries, services, config: cfg, outDir, cacheDir, siteUrl: "https://site.test/", now: NOW, log: () => {} });
   return { outDir, report };
 };
 
@@ -169,8 +173,8 @@ test("programme guides: EPG manifest, live metas, and date pages per city or gro
   assert.deepEqual(manifest.catalogs[0].extra.map((e) => e.name), ["genre", "date"]);
   assert.deepEqual(manifest.catalogs[1].extra.map((e) => e.name), ["genre", "date"], "a service guide counts too");
   assert.ok(report.warnings.some((w) => w.startsWith("Australia / Sydney: no programme guide")), "a missing guide only warns");
-  assert.equal(report.guideChannels, 2);
-  assert.deepEqual(report.guide, { "Australia / Brisbane": 1, "United States / Fast TV": 1 });
+  assert.equal(report.guideChannels, 3);
+  assert.deepEqual(report.guide, { "Australia / Brisbane": 1, "United States / Fast TV": 2 });
 
   const abc = (await read(outDir, "meta/channels/livetv-au-mjh-abc.json")).meta;
   assert.equal(abc.behaviorHints.isLive, true);
@@ -178,7 +182,7 @@ test("programme guides: EPG manifest, live metas, and date pages per city or gro
   assert.equal(abc.videos[0].id, `livetv-au-mjh-abc:epg:${NOW - 1800}`);
   const seven = (await read(outDir, "meta/channels/livetv-au-mjh-seven-syd.json")).meta;
   assert.deepEqual(seven.videos, [], "no guide data: live, with an empty schedule");
-  assert.deepEqual((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.videos.map((v) => v.title), ["Headlines"]);
+  assert.deepEqual((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.videos.map((v) => v.title), ["News Now"]);
   assert.deepEqual((await read(outDir, "meta/channels/livetv-us-m-m2.json")).meta.videos, [], "a source without a guide: live, empty");
   const news = await read(outDir, "catalog/channels/us/date=2033-05-18&genre=News.json");
   assert.deepEqual(news.metasDetailed.map((m) => [m.name, m.videos.length]), [["News Now", 1]]);
@@ -201,4 +205,22 @@ test("programme guides: EPG manifest, live metas, and date pages per city or gro
   assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono%20TV.json")), "encoded spelling");
   assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono TV.json")), "decoded spelling");
   assert.ok(!existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono+TV.json")), "no form spellings");
+});
+
+test("single-show channels are dropped when asked; news channels and kept ids stay", async () => {
+  const { outDir: plain } = await run();
+  assert.ok(existsSync(join(plain, "meta/channels/livetv-us-f-d.json")), "off by default in this config");
+  const { outDir, report } = await run({}, { ...config, singleShow: { drop: true, share: 0.95, minHours: 6 } });
+  assert.deepEqual(report.singleShow, { "United States": ["Odd (Odd Show)"] });
+  assert.ok(!existsSync(join(outDir, "meta/channels/livetv-us-f-d.json")));
+  assert.ok(existsSync(join(outDir, "meta/channels/livetv-us-f-a.json")), "News Now airs one programme all day but is news");
+  const names = (await read(outDir, "catalog/channels/us/genre=All.json")).metas.map((m) => m.name);
+  assert.ok(!names.includes("Odd"));
+  assert.deepEqual((await read(outDir, "manifest.json")).catalogs[1].extra[0].options, ["All", "Movies", "News", "Mono TV"], "an emptied group leaves the dropdown");
+  const { report: kept } = await run({}, { ...config, singleShow: { drop: true, share: 0.95, minHours: 6, keep: ["f-d"] } });
+  assert.deepEqual(kept.singleShow, {});
+  const { outDir: named, report: byName } = await run({}, { ...config, singleShow: { drop: true, names: ["mono show", "Nothing Like It"], keep: ["Odd"] } });
+  assert.deepEqual(byName.singleShow, { "United States": ["Mono Show (listed)"] }, "names drop, keep wins, any case");
+  assert.ok(!existsSync(join(named, "meta/channels/livetv-us-m-m2.json")));
+  assert.ok(byName.warnings.some((w) => w.includes("Nothing Like It")), "unknown names warn");
 });

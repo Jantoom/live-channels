@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   availability, buildManifest, catalogOrder, catalogPaths, cleanGroup, filterOptions, groupOptions, guideDates, guidePaths, guideRow,
-  isGenericTitle, parseXmltv, programmesBetween, toProgramme, xmltvTime,
+  isGenericTitle, parseXmltv, programmesBetween, seriesKey, singleShow, toProgramme, xmltvTime,
   listTier, mergeHistory, placeChannel, recentlyAired, regionChannels, serviceChannels, showTitle, toMeta, toStream, tvChannels,
   valueSpellings, withSharedNumber,
 } from "../src/lib.mjs";
@@ -284,4 +284,54 @@ test("toMeta with a schedule marks the channel live", () => {
   assert.deepEqual(m.behaviorHints, { defaultVideoId: "livetv-au-mjh-abc", isLive: true, hasScheduledVideos: true });
   assert.deepEqual(m.videos, []);
   assert.deepEqual(toMeta("au", ch).behaviorHints, { defaultVideoId: "livetv-au-mjh-abc" });
+});
+
+test("singleShow spots 24/7 one-show channels by airtime, but not news, music, sport or live ones", () => {
+  const H = 3600;
+  const run = (titles, extra = {}) => titles.map((title, i) => ({ start: i * 2 * H, stop: (i + 1) * 2 * H, title, categories: [], ...extra }));
+  const day = (title) => run(Array(12).fill(title));
+  const ch = { name: "Bondi Vet", group: "Reality" };
+  assert.equal(singleShow(ch, run(Array.from({ length: 12 }, (_, i) => `Cops S3 Ep. ${i}`)), 0, 24 * H), "Cops", "episode markers are ignored");
+  assert.equal(singleShow(ch, run([...Array(11).fill("Bondi Vet"), "Bondi Rescue"]), 0, 24 * H), null, "one other show in 12 is enough to stay");
+  assert.equal(singleShow(ch, day("Bondi Vet").slice(0, 2), 0, 24 * H), null, "too little guide to judge");
+  const week = (titles) => titles.map((t, i) => [i * H, t]);
+  assert.equal(singleShow(ch, day("Bondi Vet").slice(0, 1), 0, 24 * H, {}, week(Array(10).fill("Bondi Vet"))), "Bondi Vet", "a short guide falls back to history");
+  assert.equal(singleShow(ch, [], 0, 24 * H, {}, week([...Array(9).fill("Bondi Vet"), "Bondi Rescue"])), null, "history must be single-show too");
+  assert.equal(singleShow(ch, [], 0, 24 * H, {}, week(Array(5).fill("Bondi Vet"))), null, "too little history to judge");
+  assert.equal(singleShow({ name: "History Hit" }, run(["Hitler vs Stalin", "Saddam Hussein"]), 0, 24 * H, {}, week(["A", "B", "C", "D", "E", "F", "G", "H", "I"])), null,
+    "falling back to history doesn't mix in the guide's airtime");
+  assert.equal(singleShow(ch, [], 0, 24 * H), null);
+  assert.equal(singleShow({ name: "Euronews" }, day("Euronews"), 0, 24 * H), null);
+  assert.equal(singleShow({ name: "CNN Headlines" }, run(Array(12).fill("Top Stories"), { categories: ["News/Current Affairs"] }), 0, 24 * H), null);
+  assert.equal(singleShow({ name: "That's Rock", group: "Music" }, day("That's Rock"), 0, 24 * H), null);
+  assert.equal(singleShow({ name: "Big Brother" }, day("Big Brother Live Stream"), 0, 24 * H), null);
+  assert.equal(singleShow({ name: "Racing WA" }, day("Racing WA"), 0, 24 * H), null);
+  assert.equal(singleShow({ name: "Parliament TV" }, day("arTVox"), 0, 24 * H), null);
+  const episodes = ["Lone Wolf", "Sacrifice", "Deadline", "Carrier", "Heal Thyself", "Primal Fear", "Sudden Death", "Changing Tides", "Fame", "Lockup", "Exposure", "Hand-Off"]
+    .map((title, i) => ({ start: i * 2 * H, stop: (i + 1) * 2 * H, title, icon: `https://api.tvapi.com.au/images/NCIL03-0${10 + i}_medium.jpeg` }));
+  assert.equal(singleShow({ name: "NCIS" }, episodes, 0, 24 * H), "NCIS", "episode-titled guide, one series image code");
+  const mixed = episodes.map((p, i) => ({ ...p, icon: i % 2 ? p.icon : "https://api.tvapi.com.au/images/BLUE01-001_medium.jpeg" }));
+  assert.equal(singleShow({ name: "Crime Time" }, mixed, 0, 24 * H), null, "two series");
+  assert.equal(singleShow({ name: "All-Star Cinema" }, episodes, 0, 24 * H), null, "cinema");
+  const feed = episodes.map((p, i) => ({ ...p, title: i % 3 ? p.title : "Azteca" }));
+  assert.equal(singleShow({ name: "Azteca" }, feed, 0, 24 * H), null, "a network feed under one series id");
+  assert.equal(seriesKey({ icon: "https://images.pluto.tv/series/663c586db97855001340f74b/tile.jpg?w=900", title: "x" }), "pluto:663c586db97855001340f74b");
+  assert.equal(seriesKey({ icon: "https://10-static-assets.global.ssl.fastly.net/x/Heartland_landscape.jpg?x=1", title: "x" }), "https://10-static-assets.global.ssl.fastly.net/x/Heartland_landscape.jpg");
+  assert.equal(seriesKey({ icon: "https://tvpnlogopeu.samsungcloud.tv/channel.png", title: "Cops S1 Ep. 2" }), "title:Cops", "channel-wide images aren't trusted");
+  assert.equal(seriesKey({ title: "Cops S1 Ep. 2" }), "title:Cops");
+  assert.equal(singleShow({ name: "Judge Judy" }, run(Array.from({ length: 12 }, (_, i) => `Judge Judy: Episode ${i}`)), 0, 24 * H), "Judge Judy", "Show: Episode titles");
+  assert.equal(singleShow({ name: "Ice Road Truckers" }, run(Array(12).fill("Ice Road Truckers"), { categories: ["News & Information", "Series"] }), 0, 24 * H),
+    "Ice Road Truckers", "Pluto's loose News & Information genre doesn't protect");
+  assert.equal(singleShow({ name: "Top stories", group: "Nyheter" }, day("Top stories"), 0, 24 * H), null, "news groups in other languages");
+  assert.equal(singleShow({ name: "Hot Ones" }, run(["Hot Ones", ...Array.from({ length: 11 }, (_, i) => `Hot Ones: Guest ${i}`)]), 0, 24 * H), "Hot Ones");
+  // Short guide (Seven's 24/7 channels): one series code, history of distinct episode titles.
+  const short = episodes.slice(0, 2);
+  const distinct = week(Array.from({ length: 40 }, (_, i) => `Episode title ${i}`));
+  assert.equal(singleShow({ name: "NCIS" }, short, 0, 24 * H, {}, distinct), "NCIS");
+  assert.equal(singleShow({ name: "Surveillance Central" }, short, 0, 24 * H, {}, week([...Array(26).fill("Surveillance Oz"), ...Array(14).fill("Dashcam")])), null,
+    "a mixed channel repeats its show titles");
+  assert.equal(singleShow({ name: "NCIS" }, short.slice(0, 1), 0, 24 * H, {}, distinct), null, "one programme isn't enough");
+  assert.equal(singleShow({ name: "The Yorkshire Vet" }, short.map((p, i) => ({ ...p, title: `Season 4 Ep ${i}` })), 0, 24 * H), "The Yorkshire Vet",
+    "no history, but bare episode slots");
+  assert.equal(singleShow({ name: "Fireplace" }, run(Array(12).fill("Fireplace"), { categories: ["Movie"] }), 0, 24 * H), null);
 });
