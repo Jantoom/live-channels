@@ -4,13 +4,14 @@
 // Optional env: SITE_URL (public base URL; posters and the install page link to it,
 // and the previous build's history.json is read from it), OUT_DIR, CACHE_DIR.
 import { mkdir, rm, writeFile } from "node:fs/promises";
+import { gunzipSync } from "node:zlib";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { countries as defaultCountries, config as defaultConfig, services as defaultServices } from "../channels.config.mjs";
 import {
-  TYPE, availability, buildManifest, catalogOrder, catalogPaths, filterOptions, groupOptions, isOther,
-  listTier, mergeHistory, metaId, placeChannel, recentlyAired, regionChannels, serviceChannels, toMeta, toStream, tvChannels,
-  withSharedNumber,
+  TYPE, availability, buildManifest, catalogOrder, catalogPaths, filterOptions, groupOptions, guideDates, guidePaths, guideRow,
+  isOther, listTier, mergeHistory, metaId, parseXmltv, placeChannel, programmesBetween, recentlyAired, regionChannels,
+  serviceChannels, toMeta, toProgramme, toStream, tvChannels, withSharedNumber,
 } from "../src/lib.mjs";
 import { makePoster } from "../src/posters.mjs";
 import { installPage } from "../src/install-page.mjs";
@@ -32,13 +33,13 @@ export async function build({
   const warnings = [];
   const warn = (msg) => { warnings.push(msg); log(`  warning: ${msg}`); };
 
-  async function getJson(url) {
+  async function get(url, read) {
     let lastErr;
     for (let attempt = 1; attempt <= 3; attempt++) {
       try {
         const res = await fetchImpl(url);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        return await res.json();
+        return await read(res);
       } catch (err) {
         lastErr = err;
         if (attempt < 3) await new Promise((r) => setTimeout(r, attempt * 1000));
@@ -46,6 +47,12 @@ export async function build({
     }
     throw new Error(`${url}: ${lastErr.message}`);
   }
+  const getJson = (url) => get(url, (res) => res.json());
+  // epg.xml.gz is served as a gzip file, not with gzip transfer encoding.
+  const getText = (url) => get(url, async (res) => {
+    const buf = Buffer.from(await res.arrayBuffer());
+    return (buf[0] === 0x1f && buf[1] === 0x8b ? gunzipSync(buf) : buf).toString("utf8");
+  });
 
   // A service's .channels.json covers all its countries; fetch it once.
   const fetched = new Map();
@@ -65,6 +72,9 @@ export async function build({
   // channels: id -> { ch, country, regions[] }, so a national channel that
   // appears in every city gets one meta and one stream file.
   const channels = new Map();
+  // guide: addon id -> programmes, for countries with a `guide`. The cities share
+  // national channels; the first city's copy is kept.
+  const guide = new Map();
   const report = { builtAt: new Date(now * 1000).toISOString(), countries: {} };
 
   for (const country of countries) {
@@ -73,6 +83,22 @@ export async function build({
       for (const region of country.regions) {
         const list = regionChannels(await getJson(`${country.source}/${region}/tv.json`), config.exclude);
         checkSize(`${country.name} / ${region}`, list);
+        if (country.guide) {
+          // A missing guide only warns: the channels still play without one.
+          try {
+            const programmes = parseXmltv(await getText(`${country.source}/${region}/${country.guide}`));
+            let found = 0;
+            for (const ch of list) {
+              const id = metaId(country.id, ch.key);
+              if (!programmes.has(ch.key)) continue;
+              found++;
+              if (!guide.has(id)) guide.set(id, programmes.get(ch.key));
+            }
+            (report.guide ??= {})[`${country.name} / ${region}`] = found;
+          } catch (err) {
+            warn(`${country.name} / ${region}: no programme guide (${err.message}).`);
+          }
+        }
         for (const ch of list) {
           const id = metaId(country.id, ch.key);
           if (!channels.has(id)) channels.set(id, { ch, country, regions: [] });
@@ -149,10 +175,14 @@ export async function build({
     // Service-based countries have no cities: names stay as they are.
     const place = country.regions ? placeChannel(listed, regions, country.regions) : { kind: "service", name: listed.name };
     const ch = place.kind === "other" ? withSharedNumber(listed, (name) => numbers.get(`${country.id}/${name}`)) : listed;
+    const { past, ahead } = config.guideMetaHours;
     const meta = toMeta(country.id, ch, {
       name: place.name,
       poster: posters.get(ch.logo),
       recent: recentlyAired(history[id], now, ch.name),
+      videos: country.guide
+        ? programmesBetween(guide.get(id), now - past * 3600, now + ahead * 3600).map((p) => toProgramme(id, p))
+        : undefined,
     });
     entries.push({ ch, country, regions, place, meta, home: country.regions?.indexOf(regions[0]) });
     await writeJson(`meta/${TYPE}/${id}.json`, { meta });
@@ -187,13 +217,21 @@ export async function build({
       };
     }
     for (const option of options) {
-      const metas = lists[option].map((e) => e.meta);
+      // The list view doesn't need the schedule; the guide pages below carry it.
+      const metas = lists[option].map(({ meta: { videos, ...preview } }) => preview);
       for (const rel of catalogPaths(country.id, option, option === options[0])) {
         await writeJson(rel, { metas }); files++;
       }
+      if (!country.guide) continue;
+      for (const date of guideDates(now, config.guideDays)) {
+        const metasDetailed = lists[option].map((e) => guideRow(e.meta, guide.get(e.meta.id), date));
+        for (const rel of guidePaths(country.id, option, date)) {
+          await writeJson(rel, { metasDetailed }); files++;
+        }
+      }
     }
     if (lists[labels.other].length) report.countries[country.name][labels.other] = lists[labels.other].length;
-    catalogs.push({ id: country.id, name: country.name, options });
+    catalogs.push({ id: country.id, name: country.name, options, guide: Boolean(country.guide) });
   }
 
   const manifest = buildManifest(catalogs);
@@ -206,6 +244,7 @@ export async function build({
     channels: channels.size,
     posters: posters.size,
     historyPrograms: Object.values(history).reduce((n, e) => n + e.length, 0),
+    guideChannels: guide.size,
     warnings,
   });
   await writeJson("report.json", report);
@@ -236,7 +275,7 @@ function sitePage(base, manifest, perCountry, total) {
       layout: "grid",
       choices: perCountry.map(({ country, count }) => ({ badge: country.id.toUpperCase(), label: country.name, detail: count.toLocaleString("en-US") })),
     }],
-    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown. Each one opens on <b>All</b>, and you can narrow it to a city or genre.</p>
+    about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown. Each one opens on <b>All</b>, and you can narrow it to a city or genre. Australia opens as a TV guide in Stremio's newer apps, with a week of programmes.</p>
 <p>Streams come from broadcasters' and free streaming services' own apps via <a href="https://i.mjh.nz/">i.mjh.nz</a>. Australian and New Zealand broadcasters' channels only play from inside that country.</p>`,
     links: [{ label: "Build report", href: "report.json" }],
   });

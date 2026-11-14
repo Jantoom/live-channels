@@ -29,6 +29,10 @@ export const countries = [
     // after the first one ("Seven (Sydney)" also serves Canberra).
     source: "https://i.mjh.nz/au",
     regions: ["Sydney", "Melbourne", "Brisbane", "Perth", "Adelaide", "Canberra", "Hobart", "Darwin"],
+    // Programme guide: i.mjh.nz's XMLTV file in each region's folder. Turns the
+    // catalog into Stremio's TV guide grid (Discover, day by day), filtered by
+    // the same city dropdown. Remove to go back to a plain channel list.
+    guide: "epg.xml.gz",
   },
   // The rest, from most to least populous.
   { id: "us", name: "United States", sources: [{ service: "PlutoTV", region: "us" }, { service: "Roku", group: "The Roku Channel" }] },
@@ -67,4 +71,10 @@ export const config = {
   // A city or source with fewer channels than this fails the build, so a bad
   // fetch can't replace the last good deployment with a near-empty list.
   minChannelsPerRegion: 20,
+  // Guide pages are written for these UTC days around the build. The XMLTV data
+  // runs about a week ahead and a few hours back; days outside it still list
+  // the channels, just without programmes, rather than showing an error.
+  guideDays: { past: 7, ahead: 10 },
+  // How much of the guide each channel's own page carries, in hours from the build.
+  guideMetaHours: { past: 6, ahead: 48 },
 };

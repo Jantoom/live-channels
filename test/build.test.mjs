@@ -5,12 +5,13 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import sharp from "sharp";
 import { build } from "../scripts/build.mjs";
 
 const NOW = 2_000_000_000;
 const countries = [
-  { id: "au", name: "Australia", source: "https://fake.test/au", regions: ["Brisbane", "Sydney"] },
+  { id: "au", name: "Australia", source: "https://fake.test/au", regions: ["Brisbane", "Sydney"], guide: "epg.xml.gz" },
   { id: "us", name: "United States", sources: [{ service: "Fast", region: "us" }, { service: "Mono", group: "Mono TV" }] },
 ];
 const services = {
@@ -27,6 +28,8 @@ const mono = { channels: { m1: { name: "News Now", groups: ["News"] }, m2: { nam
 const config = {
   exclude: [], minChannelsPerRegion: 2,
   filterLabels: { all: "All", other: "Other" },
+  guideDays: { past: 1, ahead: 1 },
+  guideMetaHours: { past: 6, ahead: 48 },
 };
 
 const national = {
@@ -47,6 +50,13 @@ const data = {
     "mjh-seven-cns": { name: "Seven Cairns", network: "Seven", mjh_master: "https://i.mjh.nz/.r/seven-cns.m3u8" },
   },
 };
+// NOW is 2033-05-18T03:33:20Z. Brisbane has a guide; Sydney's is missing.
+const xt = (t) => new Date(t * 1000).toISOString().replace(/[-:T]/g, "").slice(0, 14) + " +0000";
+const epg = gzipSync(`<tv>
+  <programme start="${xt(NOW - 1800)}" stop="${xt(NOW + 1800)}" channel="mjh-abc"><title>Gardening Australia</title><desc>Tips.</desc></programme>
+  <programme start="${xt(NOW + 1800)}" stop="${xt(NOW + 5400)}" channel="mjh-abc"><title>Later Show</title></programme>
+  <programme start="${xt(NOW + 3 * 86400)}" stop="${xt(NOW + 3 * 86400 + 600)}" channel="mjh-abc"><title>Too Far</title></programme>
+</tv>`);
 const previousHistory = { "livetv-au-mjh-abc": [[NOW - 2 * 86400, "Gardening Australia"]] };
 
 const wideLogo = await sharp({ create: { width: 300, height: 100, channels: 4, background: "#ff0000" } }).png().toBuffer();
@@ -60,6 +70,7 @@ const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (i
   if (region) { const body = region in regions ? regions[region] : data[region]; return body ? json(body) : notFound; }
   if (url === services.Fast.channels) return json(fast);
   if (url === services.Mono.channels) return json(mono);
+  if (url === "https://fake.test/au/Brisbane/epg.xml.gz") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => epg };
   if (url.endsWith("/history.json")) return history ? json(history) : notFound;
   if (url === "https://logos.test/abc.png") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => wideLogo };
   if (url.startsWith("https://logos.test/")) return notFound;
@@ -146,4 +157,39 @@ test("a missing history only warns", async () => {
 
 test("refuses to publish when a region comes back short", async () => {
   await assert.rejects(run({ regions: { Sydney: national } }), /Sydney has only 1 channels/);
+});
+
+test("Australia gets a programme guide: EPG manifest, live metas, and date pages per city", async () => {
+  const { outDir, report } = await run();
+  const manifest = await read(outDir, "manifest.json");
+  assert.equal(manifest.behaviorHints.epgProvider, true);
+  assert.deepEqual(manifest.catalogs[0].extra.map((e) => e.name), ["genre", "date"]);
+  assert.equal(manifest.catalogs[1].extra.length, 1, "only guide countries take a date");
+  assert.ok(report.warnings.some((w) => w.startsWith("Australia / Sydney: no programme guide")), "a missing guide only warns");
+  assert.equal(report.guideChannels, 1);
+
+  const abc = (await read(outDir, "meta/channels/livetv-au-mjh-abc.json")).meta;
+  assert.equal(abc.behaviorHints.isLive, true);
+  assert.deepEqual(abc.videos.map((v) => v.title), ["Gardening Australia", "Later Show"], "the meta carries the next 48 hours");
+  assert.equal(abc.videos[0].id, `livetv-au-mjh-abc:epg:${new Date((NOW - 1800) * 1000).toISOString()}`);
+  const seven = (await read(outDir, "meta/channels/livetv-au-mjh-seven-syd.json")).meta;
+  assert.deepEqual(seven.videos, [], "no guide data: live, with an empty schedule");
+  assert.equal((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.videos, undefined, "other countries unchanged");
+
+  const list = await read(outDir, "catalog/channels/au/genre=Brisbane.json");
+  assert.equal(list.metas[0].videos, undefined, "the plain list leaves the schedule out");
+  const page = await read(outDir, "catalog/channels/au/date=2033-05-18&genre=Brisbane.json");
+  assert.deepEqual(page.metasDetailed.map((m) => m.name), ["ABC TV", "10 (Brisbane)"], "same channels as the city's list");
+  assert.deepEqual(page.metasDetailed[0].videos.map((v) => v.title), ["Gardening Australia", "Later Show"]);
+  assert.deepEqual(page.metasDetailed[1].videos, []);
+  const sydney = await read(outDir, "catalog/channels/au/date=2033-05-17&genre=Sydney.json");
+  assert.deepEqual(sydney.metasDetailed.map((m) => m.name), ["ABC TV", "Seven (Sydney)"]);
+  assert.deepEqual(sydney.metasDetailed[0].videos, [], "a day without programmes still lists the channels");
+  for (const date of ["2033-05-17", "2033-05-18", "2033-05-19"]) {
+    for (const option of ["All", "Brisbane", "Sydney", "Other"]) {
+      assert.ok(existsSync(join(outDir, `catalog/channels/au/date=${date}&genre=${option}.json`)), `${date} ${option}`);
+    }
+  }
+  assert.ok(!existsSync(join(outDir, "catalog/channels/au/date=2033-05-20&genre=All.json")));
+  assert.ok(!existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=All.json")));
 });

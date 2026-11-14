@@ -201,6 +201,94 @@ export function topShowShare(programs = []) {
   return programs.length ? top / programs.length : 0;
 }
 
+// ---- Programme guide (Stremio's native EPG) ---------------------------------
+// i.mjh.nz publishes an XMLTV guide per Australian city (<region>/epg.xml.gz):
+// about a week ahead for the broadcast channels and most streaming ones. Stremio
+// shows it as a day-by-day grid in Discover when the catalog declares a `date`
+// extra and the manifest sets behaviorHints.epgProvider. See
+// https://github.com/Stremio/stremio-addon-sdk/blob/master/docs/epg.md
+
+const XML_ENTITIES = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'" };
+const unescapeXml = (s) => s.replace(/&(#x[0-9a-f]+|#\d+|\w+);/gi, (m, e) =>
+  e[0] !== "#" ? XML_ENTITIES[e] ?? m : String.fromCodePoint(e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : Number(e.slice(1))));
+
+/** "20261113230000 +0000" → unix seconds. */
+export function xmltvTime(value) {
+  const m = String(value).match(/^(\d{4})(\d\d)(\d\d)(\d\d)(\d\d)(\d\d)?\s*([+-])?(\d\d)?(\d\d)?/);
+  if (!m) return NaN;
+  const [, y, mo, d, h, mi, s = "0", sign = "+", oh = "0", om = "0"] = m;
+  const offset = (sign === "-" ? -1 : 1) * (Number(oh) * 3600 + Number(om) * 60);
+  return Date.UTC(+y, +mo - 1, +d, +h, +mi, +s) / 1000 - offset;
+}
+
+/**
+ * Programmes from an XMLTV document, by channel id (the same keys as tv.json):
+ * channel -> [{ start, stop, title, subTitle, desc, categories, icon }], by start.
+ */
+export function parseXmltv(xml) {
+  const guide = new Map();
+  for (const [, attrs, body] of String(xml).matchAll(/<programme\b([^>]*)>([\s\S]*?)<\/programme>/g)) {
+    const attr = (name) => attrs.match(new RegExp(`\\b${name}="([^"]*)"`))?.[1];
+    const text = (tag) => { const m = body.match(new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)</${tag}>`)); return m ? unescapeXml(m[1]).trim() : undefined; };
+    const channel = attr("channel"), start = xmltvTime(attr("start")), stop = xmltvTime(attr("stop")), title = text("title");
+    if (!channel || !title || !(stop > start)) continue;
+    const categories = [...body.matchAll(/<category\b[^>]*>([\s\S]*?)<\/category>/g)].map((c) => unescapeXml(c[1]).trim()).filter(Boolean);
+    const icon = body.match(/<icon\b[^>]*\bsrc="([^"]*)"/)?.[1];
+    if (!guide.has(channel)) guide.set(channel, []);
+    guide.get(channel).push({ start, stop, title, subTitle: text("sub-title"), desc: text("desc"), categories, icon: icon && unescapeXml(icon) });
+  }
+  for (const list of guide.values()) list.sort((a, b) => a.start - b.start);
+  return guide;
+}
+
+// Sub-titles that only number the episode ("Episode 43 of Season 26") add nothing.
+const isEpisodeNumber = (s) => /^(?:episode|ep\.?)\s*\d+(?:\s+of\s+(?:season|series)\s*\d+)?$/i.test(s);
+
+const iso = (t) => new Date(t * 1000).toISOString();
+
+/** A guide programme as a Stremio video. Playback stays on the channel's own id. */
+export function toProgramme(channelId, p) {
+  const sub = p.subTitle && !isEpisodeNumber(p.subTitle) && p.subTitle !== p.title ? p.subTitle : "";
+  const startTime = iso(p.start);
+  return {
+    id: `${channelId}:epg:${startTime}`,
+    title: p.title,
+    released: startTime,
+    startTime,
+    endTime: iso(p.stop),
+    overview: [sub, p.desc].filter(Boolean).join("\n") || undefined,
+    thumbnail: p.icon || undefined,
+    runtime: `${Math.round((p.stop - p.start) / 60)} min`,
+    genres: p.categories?.length ? p.categories : undefined,
+  };
+}
+
+/** Programmes overlapping [from, to) (unix seconds). */
+export const programmesBetween = (programmes = [], from, to) => programmes.filter((p) => p.stop > from && p.start < to);
+
+/** "YYYY-MM-DD" UTC days from `past` days before now's to `ahead` days after it. */
+export function guideDates(now, { past, ahead }) {
+  const today = Math.floor(now / DAY) * DAY;
+  return Array.from({ length: past + ahead + 1 }, (_, i) => iso(today + (i - past) * DAY).slice(0, 10));
+}
+
+/** The UTC window [start, end) of a "YYYY-MM-DD" day, in unix seconds. */
+export const dayWindow = (date) => { const start = Date.parse(`${date}T00:00:00Z`) / 1000; return [start, start + DAY]; };
+
+/**
+ * A channel's row in a guide page: a lean preview (no description, which the
+ * grid doesn't show) with that UTC day's programmes.
+ */
+export function guideRow(meta, programmes, date) {
+  const [from, to] = dayWindow(date);
+  const { id, type, name, poster, posterShape, logo, releaseInfo } = meta;
+  return {
+    id, type, name, poster, posterShape, logo, releaseInfo,
+    behaviorHints: { isLive: true, hasScheduledVideos: true },
+    videos: programmesBetween(programmes, from, to).map((p) => toProgramme(id, p)),
+  };
+}
+
 // ---- Stremio objects --------------------------------------------------------
 
 /**
@@ -208,7 +296,7 @@ export function topShowShare(programs = []) {
  * one; otherwise a one-line description of the channel. Either way it's followed
  * by what the channel has been airing.
  */
-export function toMeta(countryId, ch, { name = ch.name, poster, recent = [] } = {}) {
+export function toMeta(countryId, ch, { name = ch.name, poster, recent = [], videos } = {}) {
   const id = metaId(countryId, ch.key);
   const about = ch.description?.trim() || describe(ch.name, ch.network, { singleShowShare: topShowShare(ch.programs) });
   const aired = recent.length ? `Recently aired: ${recent.join(", ")}` : "";
@@ -222,8 +310,11 @@ export function toMeta(countryId, ch, { name = ch.name, poster, recent = [] } = 
     releaseInfo: ch.chno ? `Channel ${ch.chno}` : undefined,
     genres: ch.network ? [ch.network] : undefined,
     description: [about, aired].filter(Boolean).join("\n\n"),
-    // Play straight away instead of looking for a list of episodes.
-    behaviorHints: { defaultVideoId: id },
+    // Play straight away instead of looking for a list of episodes. With a guide
+    // (`videos`), the channel is marked live: Stremio then shows the programmes
+    // as a schedule and still plays the channel's own id.
+    behaviorHints: videos ? { defaultVideoId: id, isLive: true, hasScheduledVideos: true } : { defaultVideoId: id },
+    videos,
   };
 }
 
@@ -271,9 +362,18 @@ export function catalogPaths(countryId, option, isDefault) {
   return paths;
 }
 
+/**
+ * A guide page's files. Stremio puts the date first ("date=2026-11-14&genre=Sydney"):
+ * stremio-core's ExtraExt::extend_one prepends the extra it adds.
+ */
+export function guidePaths(countryId, option, date) {
+  return valueSpellings(option).map((v) => `catalog/${TYPE}/${countryId}/date=${date}&genre=${v}.json`);
+}
+
 // Bump when the manifest changes so installed copies refresh.
-// catalogs: [{ id, name, options }], one per country.
-export function buildManifest(catalogs, version = "2.1.0") {
+// catalogs: [{ id, name, options, guide }], one per country; `guide` catalogs
+// also take a `date` (optional, so Discover can still list channels without one).
+export function buildManifest(catalogs, version = "2.2.0") {
   return {
     id: "community.live-channels",
     version,
@@ -288,13 +388,13 @@ export function buildManifest(catalogs, version = "2.1.0") {
       type: TYPE,
       id: c.id,
       name: c.name,
-      extra: [{ name: "genre", options: c.options, isRequired: true }],
+      extra: [{ name: "genre", options: c.options, isRequired: true }, ...(c.guide ? [{ name: "date" }] : [])],
       // Older clients (Stremio desktop v4) read these instead of `extra`; without
       // extraRequired they show "None" and send requests with no filter.
       genres: c.options,
       extraSupported: ["genre"],
       extraRequired: ["genre"],
     })),
-    behaviorHints: { configurable: false, configurationRequired: false },
+    behaviorHints: { configurable: false, configurationRequired: false, ...(catalogs.some((c) => c.guide) ? { epgProvider: true } : {}) },
   };
 }

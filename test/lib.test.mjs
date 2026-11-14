@@ -1,7 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  availability, buildManifest, catalogOrder, catalogPaths, cleanGroup, filterOptions, groupOptions, isGenericTitle,
+  availability, buildManifest, catalogOrder, catalogPaths, cleanGroup, filterOptions, groupOptions, guideDates, guidePaths, guideRow,
+  isGenericTitle, parseXmltv, programmesBetween, toProgramme, xmltvTime,
   listTier, mergeHistory, placeChannel, recentlyAired, regionChannels, serviceChannels, showTitle, toMeta, toStream, tvChannels,
   valueSpellings, withSharedNumber,
 } from "../src/lib.mjs";
@@ -201,4 +202,83 @@ test("manifest has one catalog per country with a required filter: all, regions,
   assert.deepEqual(c.extra, [{ name: "genre", options: ["All", "Sydney", "Brisbane", "Other"], isRequired: true }]);
   assert.deepEqual(c.genres, c.extra[0].options);
   assert.deepEqual(c.extraRequired, ["genre"]);
+});
+
+test("manifest marks guide catalogs with an optional date and the addon as an EPG provider", () => {
+  const plain = buildManifest([{ id: "us", name: "United States", options: ["All"] }]);
+  assert.equal(plain.behaviorHints.epgProvider, undefined, "no guide, no EPG hint");
+  const m = buildManifest([{ id: "au", name: "Australia", options: ["All", "Sydney"], guide: true }, { id: "us", name: "United States", options: ["All"] }]);
+  assert.equal(m.behaviorHints.epgProvider, true);
+  assert.deepEqual(m.catalogs[0].extra[1], { name: "date" });
+  assert.equal(m.catalogs[1].extra.length, 1);
+  assert.deepEqual(m.catalogs[0].extraRequired, ["genre"]);
+});
+
+const XMLTV = `<?xml version="1.0"?><tv>
+  <programme start="20261114010000 +0000" stop="20261114060000 +0000" channel="mjh-seven-syd">
+    <title>Seven&apos;s Horse Racing</title>
+    <sub-title>Newcastle/Sandown</sub-title>
+    <desc>Live coverage &amp; more.</desc>
+    <category>Sports</category>
+    <icon src="https://img.test/a?x=1&amp;y=2"/>
+  </programme>
+  <programme start="20261114100000 +1000" stop="20261114110000 +1000" channel="mjh-seven-syd">
+    <title>The Morning Show</title>
+    <sub-title>Episode 43 of Season 26</sub-title>
+  </programme>
+  <programme start="20261114120000 +0000" stop="20261114120000 +0000" channel="mjh-seven-syd"><title>Zero length</title></programme>
+  <programme channel="mjh-abc" start="20261113230000 +0000" stop="20261114010000 +0000"><title>News</title></programme>
+</tv>`;
+
+test("parseXmltv reads programmes by channel, in start order, with times in UTC", () => {
+  assert.equal(xmltvTime("20261114100000 +1000"), Date.UTC(2026, 10, 14, 0) / 1000);
+  assert.equal(xmltvTime("20261114010000 +0000"), Date.UTC(2026, 10, 14, 1) / 1000);
+  const g = parseXmltv(XMLTV);
+  assert.deepEqual([...g.keys()], ["mjh-seven-syd", "mjh-abc"], "attribute order doesn't matter");
+  const seven = g.get("mjh-seven-syd");
+  assert.deepEqual(seven.map((p) => p.title), ["The Morning Show", "Seven's Horse Racing"], "sorted; zero-length dropped");
+  assert.deepEqual(seven[1], {
+    start: Date.UTC(2026, 10, 14, 1) / 1000, stop: Date.UTC(2026, 10, 14, 6) / 1000, title: "Seven's Horse Racing",
+    subTitle: "Newcastle/Sandown", desc: "Live coverage & more.", categories: ["Sports"], icon: "https://img.test/a?x=1&y=2",
+  });
+});
+
+test("programmes become Stremio videos with start and end times; episode-number sub-titles are dropped", () => {
+  const [morning, racing] = parseXmltv(XMLTV).get("mjh-seven-syd");
+  assert.deepEqual(toProgramme("livetv-au-mjh-seven-syd", racing), {
+    id: "livetv-au-mjh-seven-syd:epg:2026-11-14T01:00:00.000Z",
+    title: "Seven's Horse Racing",
+    released: "2026-11-14T01:00:00.000Z",
+    startTime: "2026-11-14T01:00:00.000Z",
+    endTime: "2026-11-14T06:00:00.000Z",
+    overview: "Newcastle/Sandown\nLive coverage & more.",
+    thumbnail: "https://img.test/a?x=1&y=2",
+    runtime: "300 min",
+    genres: ["Sports"],
+  });
+  assert.equal(toProgramme("x", morning).overview, undefined);
+});
+
+test("guide pages: UTC days around now, programmes overlapping the day, date-first paths", () => {
+  const now = Date.UTC(2026, 10, 14, 0, 30) / 1000;
+  assert.deepEqual(guideDates(now, { past: 1, ahead: 2 }), ["2026-11-13", "2026-11-14", "2026-11-15", "2026-11-16"]);
+  const g = parseXmltv(XMLTV);
+  assert.deepEqual(programmesBetween(g.get("mjh-abc"), now, now + 60).map((p) => p.title), ["News"]);
+  const meta = { id: "livetv-au-mjh-abc", type: "channels", name: "ABC TV", poster: "p", posterShape: "square", description: "long", behaviorHints: { defaultVideoId: "x" } };
+  const day13 = guideRow(meta, g.get("mjh-abc"), "2026-11-13");
+  assert.deepEqual(day13.videos.map((v) => v.title), ["News"], "a show spanning midnight is on both days");
+  assert.equal(guideRow(meta, g.get("mjh-abc"), "2026-11-14").videos.length, 1);
+  assert.deepEqual(guideRow(meta, g.get("mjh-abc"), "2026-11-15").videos, []);
+  assert.deepEqual(guideRow(meta, undefined, "2026-11-15").videos, [], "channels without a guide still get a row");
+  assert.equal(day13.description, undefined, "rows stay lean");
+  assert.deepEqual(day13.behaviorHints, { isLive: true, hasScheduledVideos: true });
+  assert.deepEqual(guidePaths("au", "Sydney", "2026-11-14"), ["catalog/channels/au/date=2026-11-14&genre=Sydney.json"]);
+});
+
+test("toMeta with a schedule marks the channel live", () => {
+  const ch = { key: "mjh-abc", name: "ABC TV", network: "ABC", chno: 2 };
+  const m = toMeta("au", ch, { videos: [] });
+  assert.deepEqual(m.behaviorHints, { defaultVideoId: "livetv-au-mjh-abc", isLive: true, hasScheduledVideos: true });
+  assert.deepEqual(m.videos, []);
+  assert.deepEqual(toMeta("au", ch).behaviorHints, { defaultVideoId: "livetv-au-mjh-abc" });
 });
