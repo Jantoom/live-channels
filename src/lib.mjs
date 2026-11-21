@@ -464,10 +464,26 @@ export function guidePaths(countryId, option, date) {
   return [`catalog/${TYPE}/${countryId}/date=${date}&genre=${option}.json`];
 }
 
+/**
+ * Settings from a configured install's URL (https://host/<settings>/manifest.json), in
+ * the install page's format: "countries=au,nz". `countries` are the country catalogs
+ * installed, every one when it isn't given. Undefined when the segment isn't settings.
+ */
+export function parseSettings(segment) {
+  const [key, values, ...more] = segment.split("=");
+  if (key !== "countries" || values === undefined || more.length || segment.includes(";")) return undefined;
+  return { countries: new Set(values.split(",").filter((v) => /^[a-z]{2}$/.test(v))) };
+}
+
+/** The manifest for a configured install: only the chosen countries' catalogs. */
+export function configureManifest(manifest, { countries }) {
+  return { ...manifest, catalogs: manifest.catalogs.filter((c) => countries.has(c.id)) };
+}
+
 // Bump when the manifest changes so installed copies refresh.
 // catalogs: [{ id, name, options, guide }], one per country; `guide` catalogs
 // also take a `date` (optional, so Discover can still list channels without one).
-export function buildManifest(catalogs, version = "2.3.0") {
+export function buildManifest(catalogs, version = "2.4.0") {
   return {
     id: "community.live-channels",
     version,
@@ -489,6 +505,8 @@ export function buildManifest(catalogs, version = "2.3.0") {
       extraSupported: ["genre"],
       extraRequired: ["genre"],
     })),
-    behaviorHints: { configurable: false, configurationRequired: false, ...(catalogs.some((c) => c.guide) ? { epgProvider: true } : {}) },
+    // The Worker serves a trimmed manifest for settings in the URL; Configure opens the
+    // install page to choose them.
+    behaviorHints: { configurable: true, configurationRequired: false, ...(catalogs.some((c) => c.guide) ? { epgProvider: true } : {}) },
   };
 }

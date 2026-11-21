@@ -21,6 +21,10 @@ In Stremio: **Discover → channels**, then pick a country from the catalog drop
 
 To set it up, follow [SETUP.md](SETUP.md).
 
+## Choosing countries
+
+The install page doubles as the addon's **Configure** page: untick the countries you don't want, and the manifest URL and install buttons change to match, with the choice in the URL (`https://<site>/countries=au,nz/manifest.json`). With every country ticked it's the plain URL. Stremio's **Configure** button reopens the page with the installed countries ticked; changing them means installing again. A small Worker serves the manifest trimmed to those countries and the same files as everyone else. It also runs for every catalog request, fetching the file at its canonical path: Cloudflare redirects `genre=Sydney.json` to `genre%3DSydney.json`, so this saves the redirect.
+
 ## TV guide
 
 In Stremio's newer apps (Stremio Web and desktop since [tech update #85](https://blog.stremio.com/stremio-tech-update-85-stremio-desktop-and-stremio-web-update/)), every country opens as a programme guide: a day-by-day grid of what's on, with a day picker, filtered by the same city or genre dropdown. Each channel's page also shows its schedule for the next day. Older apps and TVs ignore the guide and show the usual list.

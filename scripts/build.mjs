@@ -325,12 +325,15 @@ function sitePage(base, manifest, perCountry, total) {
       { value: perCountry.length, label: "countries" },
       { value: total, label: "channels" },
     ],
+    // Each country's catalog can be left out; the group's switch ticks or unticks them all.
     groups: [{
       title: "Countries",
       detail: `${total.toLocaleString("en-US")} channels`,
       layout: "grid",
-      choices: perCountry.map(({ country, count }) => ({ badge: country.id.toUpperCase(), label: country.name, detail: count.toLocaleString("en-US") })),
+      key: "countries",
+      choices: perCountry.map(({ country, count }) => ({ badge: country.id.toUpperCase(), label: country.name, value: country.id, detail: count.toLocaleString("en-US") })),
     }],
+    configurable: true,
     about: `<p>Find them under <b>Discover</b>: set the type to <b>channels</b>, pick a country from the catalog dropdown. Each one opens on <b>All</b>, and you can narrow it to a city or genre. In Stremio's newer apps each one opens as a TV guide showing what's on.</p>
 <p>Streams come from broadcasters' and free streaming services' own apps via <a href="https://i.mjh.nz/">i.mjh.nz</a>. Australian and New Zealand broadcasters' channels only play from inside that country.</p>`,
     links: [{ label: "Build report", href: "report.json" }],
