@@ -5,17 +5,25 @@
 // keeps an identical copy in src/install-page.mjs. Edit the master, then run
 // `node ui-kit/sync.mjs` from stremio-addons/ to copy it into every repo.
 //
-// Settings are shown ticked and disabled: the addons are static files, so every
-// catalog is always included and there is nothing to choose yet.
+// A static addon's panel shows everything ticked and disabled: every catalog is always
+// included. A configurable addon (`configurable: true`, served by a Worker that reads
+// settings from the URL) gets working switches and ticks instead, and the manifest URL
+// and install buttons follow them:
+//   https://host/manifest.json                                  everything (the default)
+//   https://host/catalogs=storyline,other;links=/manifest.json  only what's ticked
+// Each setting is a key with the ticked values, comma-separated; settings are separated
+// by ";". A key with nothing ticked is kept, empty, so it means "none" rather than the
+// default. With everything ticked the URL is the plain one. The same page opens from
+// Stremio's Configure button (<settings>/configure) with the installed settings ticked.
 
-export const KIT_VERSION = "1.2.0";
+export const KIT_VERSION = "1.3.0";
 
 // Every addon in the family. Each page's footer links to all of them except itself
 // (matched on `name`, which must equal the addon's manifest name).
 export const ADDONS = [
   { name: "Streaming Originals", icon: "film", blurb: "Streaming service originals", href: "https://jantoom.github.io/streaming-originals/" },
   { name: "Live Channels", icon: "tv", blurb: "Free live TV by country", href: "https://jantoom.github.io/live-channels/" },
-  { name: "Movie & Series Collections", icon: "stack", blurb: "Watch orders and franchises", href: "https://jantoom.github.io/movie-series-collections/" },
+  { name: "Movie & Series Collections", icon: "stack", blurb: "Watch orders and franchises", href: "https://stremio-collections-addon.jantoom.com/" },
 ];
 
 const ICONS = {
@@ -42,16 +50,21 @@ const esc = (s) => String(s ?? "")
  * @param {string} [page.groupsTitle]
  * @param {string} [page.about]        trusted HTML: how to find the addon in Stremio, sources, caveats
  * @param {{label: string, href: string}[]} [page.links]
+ * @param {boolean} [page.configurable] the switches and ticks work, and build the manifest URL
  *
  * @typedef {object} Group
  * @property {string} title
  * @property {string} [detail]         e.g. "77 collections"
  * @property {string} [choicesLabel]   heading over the choices, e.g. "Services"
  * @property {"chips"|"grid"} [layout] chips: compact pills; grid: cards with a badge
- * @property {{label: string, detail?: string, badge?: string}[]} choices
+ * @property {{label: string, detail?: string, badge?: string, value?: string}[]} choices
+ * @property {{key: string, value: string}} [switch] configurable: the group's switch is
+ *   one value of a setting (a catalog in "catalogs"); its choices are only shown
+ * @property {string} [key]            configurable: each choice's `value` is a value of
+ *   this setting, and the group's switch ticks or unticks them all
  */
 export function installPage(page) {
-  const { name, version, tagline, icon = "stack", manifestUrl, stats = [], groups = [], about = "", links = [] } = page;
+  const { name, version, tagline, icon = "stack", manifestUrl, stats = [], groups = [], about = "", links = [], configurable = false } = page;
   const absolute = /^https?:\/\//.test(manifestUrl);
   const stremio = absolute ? manifestUrl.replace(/^https?:\/\//, "stremio://") : "#";
   const web = absolute ? `https://web.stremio.com/#/addons?addon=${encodeURIComponent(manifestUrl)}` : "#";
@@ -78,9 +91,13 @@ ${stats.length ? `<ul class="stats">${stats.map((s) => `<li><b>${esc(fmt(s.value
   <p class="hint">Or copy the URL and paste it into the search box on Stremio's Addons page.</p>
 </section>
 ${groups.length ? `<section class="card included" aria-labelledby="included-title">
-  <div class="section-head"><h2 id="included-title">${esc(page.groupsTitle || "What's included")}</h2><span class="lock">${LOCK_ICON}Everything included</span></div>
-  <p class="note">These are the catalogs this addon installs. Picking your own selection isn't available yet, so everything stays ticked.</p>
-  <div class="groups">${groups.map(group).join("\n  ")}</div>
+  <div class="section-head"><h2 id="included-title">${esc(page.groupsTitle || "What's included")}</h2>${configurable
+    ? `<span class="lock" id="selection">Everything included</span>`
+    : `<span class="lock">${LOCK_ICON}Everything included</span>`}</div>
+  <p class="note">${configurable
+    ? "Untick what you don't want. The manifest URL and install buttons above change to match, so install after choosing. To change it later, use the addon's Configure button in Stremio and install again."
+    : "These are the catalogs this addon installs. Picking your own selection isn't available yet, so everything stays ticked."}</p>
+  <div class="groups">${groups.map((g, i) => group(g, i, configurable)).join("\n  ")}</div>
 </section>` : ""}
 ${about ? `<section class="about">${about}</section>` : ""}
 ${footer(name, links)}
@@ -89,16 +106,24 @@ ${footer(name, links)}
 
 // Each catalog is its own boxed panel so its choices can't be mistaken for the
 // next catalog's.
-function group(g, i) {
+// On a configurable page, a group either has a switch that is one setting's value (its
+// choices are just shown, as plain pills), or choices that are a setting's values (its
+// switch ticks them all).
+function group(g, i, configurable = false) {
   const layout = g.layout === "grid" ? "grid" : "chips";
-  const choice = (c) => `<label class="choice"><input type="checkbox" checked disabled>`
-    + `<span class="tick">${CHECK_ICON}</span>`
+  const live = configurable && (g.switch || g.key);
+  const ticks = live && g.key;
+  const input = (key, value) => (key ? `data-key="${esc(key)}" value="${esc(value)}" checked` : "checked disabled");
+  const choice = (c) => (live && !ticks
+    ? `<span class="choice plain">`
+    : `<label class="choice${ticks ? " live" : ""}"><input type="checkbox" ${input(ticks && g.key, c.value)}><span class="tick">${CHECK_ICON}</span>`)
     + (c.badge ? `<span class="badge">${esc(c.badge)}</span>` : "")
     + `<span class="label">${esc(c.label)}</span>`
     + (c.detail ? `<span class="detail">${esc(c.detail)}</span>` : "")
-    + `</label>`;
+    + (live && !ticks ? `</span>` : `</label>`);
+  const toggle = !live ? "checked disabled" : g.switch ? input(g.switch.key, g.switch.value) : "checked data-all";
   return `<div class="group" role="group" aria-labelledby="group-${i}">
-    <div class="group-head"><label class="switch"><input type="checkbox" role="switch" checked disabled aria-labelledby="group-${i}"><span></span></label>`
+    <div class="group-head"><label class="switch${live ? " live" : ""}"><input type="checkbox" role="switch" ${toggle} aria-labelledby="group-${i}"><span></span></label>`
     + `<span class="group-title" id="group-${i}">${esc(g.title)}</span>${g.detail ? `<span class="detail">${esc(g.detail)}</span>` : ""}</div>
     <div class="group-body">${g.choicesLabel ? `<p class="eyebrow">${esc(g.choicesLabel)}</p>` : ""}<div class="${layout}">${g.choices.map(choice).join("")}</div></div>
   </div>`;
@@ -200,19 +225,51 @@ background:var(--surface);border:1px solid var(--border);box-shadow:var(--shadow
 background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 .addon b{display:block;font-size:14px;line-height:1.3}.addon b+span{display:block;color:var(--muted);font-size:12px}
 .links{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:14px}
+.switch.live{cursor:pointer}
+.switch span::after{transition:left .15s}
+.switch input:not(:checked)+span{background:var(--border)}
+.switch input:not(:checked)+span::after{left:2px}
+.switch.live input:focus-visible+span{outline:2px solid var(--accent);outline-offset:2px}
+.choice.live{cursor:pointer}
+.choice.live:has(input:not(:checked)){background:var(--surface);border-color:var(--border)}
+.choice.live input:not(:checked)~.tick{background:var(--surface);box-shadow:inset 0 0 0 1.5px var(--border);color:transparent}
+.choice.live input:focus-visible~.tick{outline:2px solid var(--accent);outline-offset:2px}
+.choice.plain{cursor:default;padding:7px 12px}
+.group.off .group-body{opacity:.45}
+.lock.custom{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft)}
 @media (max-width:480px){.page{padding-top:28px}.card{padding:16px;border-radius:16px}h1{font-size:22px}
 .url{flex-direction:column;padding:10px}.url code{padding:4px 4px 0}.copy{justify-content:center}.actions .btn{flex:1 1 100%}
 .group-head{padding:10px 12px}.group-body{padding:12px}.grid{grid-template-columns:1fr 1fr}.grid .choice .detail{display:none}}
 `;
 
-// Resolves a relative manifest URL (local `npm run serve`), fills in the install
-// links, and copies the URL. The synchronous execCommand copy goes first because
-// some embedded browsers leave navigator.clipboard.writeText pending forever.
+// Resolves a relative manifest URL (local `npm run serve`), builds it from the ticked
+// settings on a configurable page (ticking what the page's own address names, when it
+// opens from Stremio's Configure button), fills in the install links, and copies the
+// URL. The synchronous execCommand copy goes first because some embedded browsers
+// leave navigator.clipboard.writeText pending forever.
 const SCRIPT = `(()=>{
 const code=document.getElementById("manifest-url"),btn=document.getElementById("copy"),label=btn.querySelector("span");
-const url=new URL(code.textContent,location.href).href;code.textContent=url;
-document.getElementById("install").href=url.replace(/^https?:\\/\\//,"stremio://");
+const inputs=[...document.querySelectorAll("input[data-key]")],status=document.getElementById("selection");
+const keys=[...new Set(inputs.map(i=>i.dataset.key))];
+const opened=(location.pathname.match(/([^/]+)[/]configure(?:[.]html)?[/]?$/)||[])[1]||"";
+const current=opened.includes("=")?opened:"";
+if(current){const named=new Map(decodeURIComponent(current).split(";").map(p=>{const [k,v=""]=p.split("=");return [k,new Set(v.split(",").filter(Boolean))]}));
+for(const i of inputs)if(named.has(i.dataset.key))i.checked=named.get(i.dataset.key).has(i.value)}
+let base=new URL(code.textContent,location.href).href;
+if(current)base=base.replace("/"+current+"/manifest.json","/manifest.json");
+let url=base;
+function settings(){if(inputs.every(i=>i.checked))return "";
+return keys.map(k=>k+"="+inputs.filter(i=>i.dataset.key===k&&i.checked).map(i=>i.value).join(",")).join(";")}
+function update(){const s=settings();url=s?base.replace(/manifest[.]json$/,s+"/manifest.json"):base;code.textContent=url;
+document.getElementById("install").href=url.replace(/^https?:[/][/]/,"stremio://");
 document.getElementById("web").href="https://web.stremio.com/#/addons?addon="+encodeURIComponent(url);
+for(const g of document.querySelectorAll(".group")){const sw=g.querySelector(".group-head input");
+if(sw.hasAttribute("data-all"))sw.checked=[...g.querySelectorAll(".group-body input[data-key]")].some(i=>i.checked);
+g.classList.toggle("off",!sw.disabled&&!sw.checked)}
+if(status){status.textContent=s?"Your selection":"Everything included";status.classList.toggle("custom",Boolean(s))}}
+document.addEventListener("change",e=>{const t=e.target;
+if(t.hasAttribute("data-all"))for(const i of t.closest(".group").querySelectorAll(".group-body input[data-key]"))i.checked=t.checked;update()});
+update();
 let timer;
 function done(ok){btn.toggleAttribute("data-copied",ok);label.textContent=ok?"Copied":"Press Ctrl+C";clearTimeout(timer);
 timer=setTimeout(()=>{btn.removeAttribute("data-copied");label.textContent="Copy"},1800)}
