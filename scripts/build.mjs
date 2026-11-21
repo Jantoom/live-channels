@@ -2,9 +2,10 @@
 // Builds the static Stremio addon into ./dist from i.mjh.nz channel lists.
 //   node scripts/build.mjs
 // Optional env: SITE_URL (public base URL; posters and the install page link to it,
-// and the previous build's history.json is read from it), OUT_DIR, CACHE_DIR.
+// and the previous build's history.json.gz is read from it), PREVIOUS_SITE_URL (where to
+// read the history when SITE_URL has none yet, as after a move), OUT_DIR, CACHE_DIR.
 import { mkdir, rm, writeFile } from "node:fs/promises";
-import { gunzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { countries as defaultCountries, config as defaultConfig, services as defaultServices } from "../channels.config.mjs";
@@ -26,6 +27,7 @@ export async function build({
   outDir = process.env.OUT_DIR || join(root, "dist"),
   cacheDir = process.env.CACHE_DIR || join(root, ".cache"),
   siteUrl = process.env.SITE_URL || `http://127.0.0.1:${process.env.PORT || 7000}`,
+  previousSiteUrl = process.env.PREVIOUS_SITE_URL,
   now = Math.floor(Date.now() / 1000),
   log = console.log,
 } = {}) {
@@ -150,11 +152,23 @@ export async function build({
   // ---- 2. Schedule history --------------------------------------------------
   // Keyed by addon id: the services use the same channel ids in several countries.
   // Merged for every channel, so one dropped below keeps its history.
-  let previous = {};
-  try {
-    previous = await getJson(`${base}/history.json`);
-  } catch (err) {
-    warn(`No previous schedule history (${err.message}); "Recently aired" starts from today's schedule.`);
+  // It's published gzipped (history.json.gz): plain, it's over Cloudflare's 25 MiB limit
+  // for a file. A site that has just moved has no history yet, so it can read the old
+  // site's, which may be the plain history.json GitHub Pages published.
+  let previous;
+  const failures = [];
+  const sites = [base, previousSiteUrl?.replace(/\/$/, "")].filter(Boolean);
+  for (const url of sites.flatMap((site) => [`${site}/history.json.gz`, `${site}/history.json`])) {
+    try {
+      previous = JSON.parse(await getText(url));
+      break;
+    } catch (err) {
+      failures.push(err.message);
+    }
+  }
+  if (!previous) {
+    previous = {};
+    warn(`No previous schedule history (${failures.join("; ")}); "Recently aired" starts from today's schedule.`);
   }
   const programs = Object.fromEntries([...channels].map(([id, { ch }]) => [id, ch.programs || []]));
   const history = mergeHistory(previous, programs, now);
@@ -277,8 +291,9 @@ export async function build({
 
   const manifest = buildManifest(catalogs);
   await writeJson("manifest.json", manifest);
-  await writeJson("history.json", history);
-  await writeFile(join(outDir, ".nojekyll"), "");
+  await writeFile(join(outDir, "history.json.gz"), gzipSync(JSON.stringify(history)));
+  // Stremio's web and desktop apps fetch across origins.
+  await writeFile(join(outDir, "_headers"), "/*\n  Access-Control-Allow-Origin: *\n");
   const perCountry = countries.map((c) => ({ country: c, count: entries.filter((e) => e.country === c).length }));
   await writeFile(join(outDir, "index.html"), sitePage(base, manifest, perCountry, channels.size));
   Object.assign(report, {

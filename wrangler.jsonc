@@ -1,0 +1,14 @@
+// Cloudflare config. `npm run build` first: the built ./dist is served as static assets,
+// with no Worker script, so every request is a free asset request.
+{
+  "name": "live-channels",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./dist"
+  },
+  // The addon's address. Cloudflare creates its DNS record and certificate on the first
+  // deploy. The workflow builds with this as SITE_URL, so posters and the install page
+  // link to it.
+  "routes": [{ "pattern": "stremio-channels-addon.jantoom.com", "custom_domain": true }],
+  "workers_dev": false
+}

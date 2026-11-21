@@ -1,6 +1,6 @@
 # Live Channels
 
-A Stremio addon of free live TV channels, organised by country. It's hosted as static files on GitHub Pages and rebuilt every 6 hours by GitHub Actions, so there's no server to run.
+A Stremio addon of free live TV channels, organised by country. It's rebuilt every 6 hours by GitHub Actions and served from Cloudflare as static files (Workers static assets, with no Worker script), so there's no server to run.
 
 In Stremio: **Discover → channels**, then pick a country from the catalog dropdown and use the genre dropdown to narrow it down.
 
@@ -39,8 +39,8 @@ How it works:
 
 - The guide files are fetched with the channel lists and matched by channel id. If one fails to download, the build warns and those channels go without programmes; the build still publishes.
 - The manifest sets `behaviorHints.epgProvider`, and each catalog takes an optional `date` extra. Channel metas are marked `isLive` (which is how Stremio treats them as live without switching the type to `tv`) and carry their programmes as `videos` with `startTime`/`endTime`.
-- Stremio asks for a guide page per UTC day: `catalog/channels/au/date=2026-11-14&genre=Sydney.json`. The date comes first and the value is encoded like `encodeURIComponent`, as Stremio sends it, so guide pages are only written in that spelling and the decoded one (unlike the lists, which cover every client's spelling). The build writes them for 7 days back to 10 days ahead; days with no data still list the channels.
-- The guide pages are most of the site: about 210 MB in all, of which a typical build's "today" pages are about 80 MB (the US "All" page is about 5 MB, much less gzipped). Programmes are kept lean (no runtime, short ids) to keep publishing quick; GitHub Pages has timed out publishing before.
+- Stremio asks for a guide page per UTC day: `catalog/channels/au/date=2026-11-14&genre=Sydney.json`. The date comes first and the value is encoded like `encodeURIComponent`, as Stremio sends it, and Cloudflare decodes the path before matching a file, so guide pages are written once, under the plain value. Lists also get a `+` spelling for clients that form-encode spaces (`genre=Gold+Coast`), since Cloudflare leaves `+` alone. The build writes them for 7 days back to 10 days ahead; days with no data still list the channels.
+- The guide pages are most of the site: about 210 MB in all, of which a typical build's "today" pages are about 80 MB (the US "All" page is about 5 MB, much less gzipped). Programmes are kept lean (no runtime, short ids) to keep publishing quick. Cloudflare only uploads the files that changed since the last deploy, and allows up to 20,000 files on the free plan.
 - The guide is only as fresh as the last build (every 6 hours). That's fine for scheduled programmes, but late schedule changes show up at the next build.
 
 ## Channels left out: 24/7 single-show channels
@@ -73,7 +73,7 @@ Left out on purpose:
 - **Channel number** where the channel has a broadcast one, e.g. "Channel 10". The streaming services' own numbers aren't shown, because nobody knows them.
 - **Description:** the source's own description where it has one; otherwise a one-sentence description of the channel from `src/descriptions.mjs`, followed by **"Recently aired:"** with up to 10 shows from the past week. Shows aired on more days come first, so a regular series beats a one-off movie. Episode-slot titles ("Season 7 Episode 11") and the channel's own name are left out, so a channel built around one show may have no list at all.
 
-The schedules in i.mjh.nz's data only cover about the last 4 and next 9 hours. So the build runs every 6 hours and keeps a rolling 7-day history in `history.json`, which it publishes with the site and reads back on the next run. The "Recently aired" lists fill out over a few days.
+The schedules in i.mjh.nz's data only cover about the last 4 and next 9 hours. So the build runs every 6 hours and keeps a rolling 7-day history in `history.json.gz`, which it publishes with the site and reads back on the next run. (It is gzipped because the plain file is over Cloudflare's 25 MiB limit for one file.) The "Recently aired" lists fill out over a few days.
 
 ## Limits
 
@@ -102,7 +102,7 @@ After each build, `report.json` on the site lists how many channels each city an
 npm install          # once, for the image library that draws the posters
 npm test             # unit tests and a full build against fake data
 npm run build        # real build into ./dist (needs internet; about a minute when posters aren't cached)
-npm run serve        # serves ./dist on http://127.0.0.1:7000
+npm run serve        # serves ./dist the way Cloudflare does, on http://127.0.0.1:7000 (wrangler dev)
 ```
 
 With the server running, install `http://127.0.0.1:7000/manifest.json` in Stremio on the same machine.

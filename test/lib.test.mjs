@@ -152,8 +152,8 @@ test("streams are plain links that say which regions carry the channel", () => {
 
 test("catalogPaths covers encodings and the no-region default", () => {
   assert.deepEqual(valueSpellings("Sydney"), ["Sydney"]);
-  assert.deepEqual(valueSpellings("Gold Coast"), ["Gold Coast", "Gold+Coast", "Gold%20Coast"]);
-  assert.ok(valueSpellings("Season's Greetings").includes("Season%27s+Greetings"));
+  assert.deepEqual(valueSpellings("Gold Coast"), ["Gold Coast", "Gold+Coast"], "Cloudflare decodes %20 to the plain value, but not +");
+  assert.deepEqual(valueSpellings("Season's Greetings"), ["Season's Greetings", "Season's+Greetings"], "form encoding's Season%27s+Greetings decodes to the + spelling");
   assert.deepEqual(catalogPaths("au", "Sydney", false), ["catalog/channels/au/genre=Sydney.json"]);
   assert.deepEqual(catalogPaths("au", "Brisbane", true), ["catalog/channels/au/genre=Brisbane.json", "catalog/channels/au.json"]);
 });
@@ -274,8 +274,7 @@ test("guide pages: UTC days around now, programmes overlapping the day, date-fir
   assert.deepEqual(guidePaths("au", "Sydney", "2026-11-14"), ["catalog/channels/au/date=2026-11-14&genre=Sydney.json"]);
   assert.deepEqual(guidePaths("us", "News + Opinion", "2026-11-14"), [
     "catalog/channels/us/date=2026-11-14&genre=News + Opinion.json",
-    "catalog/channels/us/date=2026-11-14&genre=News%20%2B%20Opinion.json",
-  ]);
+  ], "Stremio's News%20%2B%20Opinion decodes to the plain value");
 });
 
 test("toMeta with a schedule marks the channel live", () => {

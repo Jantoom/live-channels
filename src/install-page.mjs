@@ -19,13 +19,13 @@
 // opens from Stremio's Configure button (<settings>/configure) with the installed
 // settings ticked.
 
-export const KIT_VERSION = "1.4.1";
+export const KIT_VERSION = "1.4.2";
 
 // Every addon in the family. Each page's footer links to all of them except itself
 // (matched on `name`, which must equal the addon's manifest name).
 export const ADDONS = [
   { name: "Streaming Originals", icon: "film", blurb: "Streaming service originals", href: "https://jantoom.github.io/streaming-originals/" },
-  { name: "Live Channels", icon: "tv", blurb: "Free live TV by country", href: "https://jantoom.github.io/live-channels/" },
+  { name: "Live Channels", icon: "tv", blurb: "Free live TV by country", href: "https://stremio-channels-addon.jantoom.com/" },
   { name: "Movie & Series Collections", icon: "stack", blurb: "Watch orders and franchises", href: "https://stremio-collections-addon.jantoom.com/" },
 ];
 

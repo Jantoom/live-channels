@@ -437,20 +437,12 @@ export function toStream(ch, note) {
 
 /**
  * Static files can't parse query strings, so each request path must exist as a
- * file. Clients encode extra values differently and hosts may or may not decode
- * the path, so write every spelling ("Gold Coast" as Gold%20Coast and Gold+Coast).
+ * file. Cloudflare decodes a request's path before matching a file, so any
+ * percent-encoding (Gold%20Coast, M%C3%BAsica, Season%27s) finds the plain value.
+ * It leaves "+" alone, so form encoding's spaces (Gold+Coast) need their own file.
  */
 export function valueSpellings(value) {
-  // Form encoding (Stremio's own) also escapes ! ~ ' ( ), which encodeURIComponent keeps.
-  const form = encodeURIComponent(value).replace(/[!~'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
-  return [...new Set([
-    value,
-    value.replace(/ /g, "+"),
-    encodeURIComponent(value),
-    encodeURIComponent(value).replace(/%20/g, "+"),
-    form,
-    form.replace(/%20/g, "+"),
-  ])];
+  return [...new Set([value, value.replace(/ /g, "+")])];
 }
 
 export function catalogPaths(countryId, option, isDefault) {
@@ -465,12 +457,11 @@ export function catalogPaths(countryId, option, isDefault) {
  * A guide page's files. Only stremio-core's apps ask for guide pages, so unlike
  * the lists they need just its spelling: the date first
  * ("date=2026-11-14&genre=Sydney", as ExtraExt::extend_one prepends the extra it
- * adds) and values encoded like encodeURIComponent (URI_COMPONENT_ENCODE_SET).
- * Hosts that decode the path, like GitHub Pages, look for the plain value.
+ * adds) and values encoded like encodeURIComponent (URI_COMPONENT_ENCODE_SET),
+ * which Cloudflare decodes to the plain value.
  */
 export function guidePaths(countryId, option, date) {
-  return [...new Set([option, encodeURIComponent(option)])]
-    .map((v) => `catalog/${TYPE}/${countryId}/date=${date}&genre=${v}.json`);
+  return [`catalog/${TYPE}/${countryId}/date=${date}&genre=${option}.json`];
 }
 
 // Bump when the manifest changes so installed copies refresh.

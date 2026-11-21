@@ -8,19 +8,17 @@ on:
   workflow_dispatch:         # "Run workflow" button in the Actions tab
   push:
     branches: [main]
-    paths: ["channels.config.mjs", "src/**", "scripts/**", ".github/workflows/**", "package-lock.json"]
+    paths: ["channels.config.mjs", "src/**", "scripts/**", "wrangler.jsonc", ".github/workflows/**", "package-lock.json"]
 
 permissions:
   contents: read
-  pages: write
-  id-token: write
 
 concurrency:
-  group: pages
+  group: deploy
   cancel-in-progress: false
 
 jobs:
-  build:
+  deploy:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,9 +26,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-
-      - id: pages
-        uses: actions/configure-pages@v5
 
       - run: npm ci
 
@@ -44,21 +39,19 @@ jobs:
       - name: Test
         run: npm test
 
+      # The addon's address is the custom domain in wrangler.jsonc.
+      - name: Read the addon's address
+        run: node -e 'const m = require("fs").readFileSync("wrangler.jsonc", "utf8").match(/"pattern":\s*"([^"]+)"/); console.log(`SITE_URL=https://${m[1]}`)' >> "$GITHUB_ENV"
+
       - name: Build addon
         run: node scripts/build.mjs
         env:
-          SITE_URL: ${{ steps.pages.outputs.base_url }}
+          # Read history.json from the old GitHub Pages site until the new one has its own.
+          PREVIOUS_SITE_URL: https://jantoom.github.io/live-channels
 
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+      # A failed test or build stops here, so the last good deployment stays up.
+      - name: Deploy to Cloudflare
+        run: npx --yes wrangler@4 deploy
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

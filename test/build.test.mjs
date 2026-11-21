@@ -5,7 +5,7 @@ import { mkdtemp, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
 import sharp from "sharp";
 import { build } from "../scripts/build.mjs";
 
@@ -70,7 +70,10 @@ const headers = (h = {}) => ({ get: (k) => h[k.toLowerCase()] ?? null });
 const json = (body) => ({ ok: true, status: 200, headers: headers(), json: async () => body });
 const notFound = { ok: false, status: 404, headers: headers() };
 
-const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (input) => {
+// The history is served gzipped (history.json.gz), or plain (history.json) by a site from
+// before the move, as GitHub Pages served it.
+const bytes = (buf) => ({ ok: true, status: 200, headers: headers(), arrayBuffer: async () => buf });
+const fakeFetch = ({ regions = {}, history = previousHistory, historyAt = "", historyPlain = false } = {}) => async (input) => {
   const url = String(input);
   const region = url.match(/au\/([^/]+)\/tv\.json$/)?.[1];
   if (region) { const body = region in regions ? regions[region] : data[region]; return body ? json(body) : notFound; }
@@ -78,17 +81,21 @@ const fakeFetch = ({ regions = {}, history = previousHistory } = {}) => async (i
   if (url === services.Mono.channels) return json(mono);
   if (url === "https://fake.test/fast/us.xml.gz") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => fastEpg };
   if (url === "https://fake.test/au/Brisbane/epg.xml.gz") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => epg };
-  if (url.endsWith("/history.json")) return history ? json(history) : notFound;
+  if (history && url.startsWith(historyAt) && url.endsWith(historyPlain ? "/history.json" : "/history.json.gz")) {
+    const text = Buffer.from(JSON.stringify(history));
+    return bytes(historyPlain ? text : gzipSync(text));
+  }
   if (url === "https://logos.test/abc.png") return { ok: true, status: 200, headers: headers(), arrayBuffer: async () => wideLogo };
   if (url.startsWith("https://logos.test/")) return notFound;
   return notFound;
 };
 
 const read = async (dir, rel) => JSON.parse(await readFile(join(dir, rel), "utf8"));
-const run = async (opts = {}, cfg = config) => {
+const readHistory = async (dir) => JSON.parse(gunzipSync(await readFile(join(dir, "history.json.gz"))).toString("utf8"));
+const run = async (opts = {}, cfg = config, more = {}) => {
   const outDir = await mkdtemp(join(tmpdir(), "live-channels-"));
   const cacheDir = await mkdtemp(join(tmpdir(), "live-channels-cache-"));
-  const report = await build({ fetchImpl: fakeFetch(opts), countries, services, config: cfg, outDir, cacheDir, siteUrl: "https://site.test/", now: NOW, log: () => {} });
+  const report = await build({ fetchImpl: fakeFetch(opts), countries, services, config: cfg, outDir, cacheDir, siteUrl: "https://site.test/", now: NOW, log: () => {}, ...more });
   return { outDir, report };
 };
 
@@ -126,7 +133,8 @@ test("service countries list each source's channels by group, minus DRM and dupl
   assert.deepEqual(await names("All"), ["News Now", "Movies 1", "Mono Show", "Odd"], "news first, single-show channels last");
   assert.equal((await read(outDir, "meta/channels/livetv-us-f-a.json")).meta.releaseInfo, undefined, "service numbers stay hidden");
   assert.deepEqual(await names("News"), ["News Now"]);
-  assert.deepEqual(await names("Mono%20TV"), ["Mono Show"]);
+  assert.deepEqual(await names("Mono TV"), ["Mono Show"]);
+  assert.deepEqual(await names("Mono+TV"), ["Mono Show"], "form encoding's spaces");
   assert.deepEqual(await names("Other"), ["Odd"]);
   const stream = (await read(outDir, "stream/channels/livetv-us-f-a.json")).streams[0];
   assert.deepEqual(stream, { name: "Live", title: "News Now\nFast TV", url: "https://jmp.test/f-a.m3u8" });
@@ -152,7 +160,7 @@ test("descriptions carry recently aired shows from the merged history", async ()
   const abc = (await read(outDir, "meta/channels/livetv-au-mjh-abc.json")).meta;
   assert.equal(abc.releaseInfo, "Channel 2");
   assert.match(abc.description, /\n\nRecently aired: Gardening Australia$/);
-  const history = await read(outDir, "history.json");
+  const history = await readHistory(outDir);
   assert.deepEqual(history["livetv-au-mjh-abc"].map(([, t]) => t), ["Gardening Australia", "Gardening Australia", "Later Show"]);
 });
 
@@ -160,6 +168,15 @@ test("a missing history only warns", async () => {
   const { outDir, report } = await run({ history: null });
   assert.ok(report.warnings.some((w) => w.startsWith("No previous schedule history")));
   assert.match((await read(outDir, "meta/channels/livetv-au-mjh-abc.json")).meta.description, /Recently aired: Gardening Australia/);
+});
+
+test("a site that has just moved reads the old site’s history", async () => {
+  const { outDir, report } = await run({ historyAt: "https://old.test/", historyPlain: true }, config, { previousSiteUrl: "https://old.test/" });
+  assert.ok(!report.warnings.some((w) => w.startsWith("No previous schedule history")));
+  assert.equal((await readHistory(outDir))["livetv-au-mjh-abc"].length, 3, "the old site’s plain history.json, merged");
+  assert.ok(!existsSync(join(outDir, "history.json")), "published gzipped: plain, it’s over Cloudflare’s 25 MiB limit");
+  const { report: lost } = await run({ historyAt: "https://elsewhere.test/" }, config, { previousSiteUrl: "https://old.test/" });
+  assert.ok(lost.warnings.some((w) => w.includes("https://site.test") && w.includes("https://old.test")), "both tried");
 });
 
 test("refuses to publish when a region comes back short", async () => {
@@ -202,8 +219,9 @@ test("programme guides: EPG manifest, live metas, and date pages per city or gro
     }
   }
   assert.ok(!existsSync(join(outDir, "catalog/channels/au/date=2033-05-20&genre=All.json")));
-  assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono%20TV.json")), "encoded spelling");
-  assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono TV.json")), "decoded spelling");
+  assert.ok(existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono TV.json")), "the plain spelling, which Cloudflare finds for Mono%20TV");
+  assert.ok(!existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono%20TV.json")), "no encoded copy");
+  assert.match(await readFile(join(outDir, "_headers"), "utf8"), /Access-Control-Allow-Origin: \*/);
   assert.ok(!existsSync(join(outDir, "catalog/channels/us/date=2033-05-18&genre=Mono+TV.json")), "no form spellings");
 });
 

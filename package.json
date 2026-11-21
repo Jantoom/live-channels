@@ -2,7 +2,7 @@
   "name": "live-channels",
   "version": "1.0.0",
   "private": true,
-  "description": "Static Stremio addon of free live TV channels by country and city, built from i.mjh.nz.",
+  "description": "Stremio addon of free live TV channels by country and city, built from i.mjh.nz and served from Cloudflare.",
   "type": "module",
   "engines": {
     "node": ">=20"
@@ -10,7 +10,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test": "node --test test/*.test.mjs",
-    "serve": "node scripts/serve.mjs"
+    "serve": "npx --yes wrangler@4 dev --port 7000",
+    "deploy": "npx --yes wrangler@4 deploy"
   },
   "dependencies": {
     "sharp": "^0.35.5"
