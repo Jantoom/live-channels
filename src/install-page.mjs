@@ -19,7 +19,7 @@
 // opens from Stremio's Configure button (<settings>/configure) with the installed
 // settings ticked.
 
-export const KIT_VERSION = "1.4.0";
+export const KIT_VERSION = "1.4.1";
 
 // Every addon in the family. Each page's footer links to all of them except itself
 // (matched on `name`, which must equal the addon's manifest name).
@@ -251,12 +251,14 @@ background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 .choice.live input:focus-visible~.tick{outline:2px solid var(--accent);outline-offset:2px}
 .choice.plain{cursor:default;padding:7px 12px}
 .group.off .group-body{opacity:.45}
-.toggles{display:inline-flex;gap:6px}
-.icon-toggle{position:relative;display:inline-grid;place-items:center;width:30px;height:30px;border-radius:8px;cursor:pointer;
-color:var(--muted);background:var(--surface);border:1px solid var(--border);transition:background .15s,color .15s}
+.toggles{display:inline-flex;gap:2px}
+.icon-toggle{position:relative;display:inline-grid;place-items:center;width:32px;height:32px;border-radius:8px;cursor:pointer;
+color:color-mix(in srgb,var(--muted) 60%,transparent);transition:color .15s}
 .icon-toggle input{position:absolute;opacity:0;pointer-events:none}
-.icon-toggle svg{font-size:15px}
-.icon-toggle:has(input:checked){color:var(--accent-fg);background:var(--accent);border-color:transparent}
+.icon-toggle svg{font-size:20px}
+.icon-toggle:hover{color:var(--muted)}
+.icon-toggle:has(input:checked){color:var(--accent)}
+.icon-toggle:has(input:disabled){color:color-mix(in srgb,var(--muted) 35%,transparent);cursor:not-allowed}
 .icon-toggle:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
 .icon-toggle::after{content:attr(data-tip);position:absolute;z-index:2;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:max-content;max-width:240px;
 padding:6px 10px;border-radius:8px;font-size:12px;font-weight:500;line-height:1.4;text-align:center;color:var(--surface);background:var(--fg);
@@ -284,15 +286,18 @@ for(const i of inputs)if(named.has(i.dataset.key)){const has=named.get(i.dataset
 let base=new URL(code.textContent,location.href).href;
 if(current)base=base.replace("/"+current+"/manifest.json","/manifest.json");
 let url=base;
+const on=i=>i.checked&&!i.disabled;
 function settings(){const parts=[];for(const k of keys){const own=inputs.filter(i=>i.dataset.key===k),invert=own.some(i=>i.hasAttribute("data-invert"));
-const listed=own.filter(i=>invert?!i.checked:i.checked);if(invert?listed.length:listed.length<own.length)parts.push(k+"="+listed.map(i=>encodeURIComponent(i.value)).join(","))}
+const listed=own.filter(i=>invert?!i.checked:on(i));if(invert?listed.length:listed.length<own.length)parts.push(k+"="+listed.map(i=>encodeURIComponent(i.value)).join(","))}
 return parts.join(";")}
-function update(){const s=settings();url=s?base.replace(/manifest[.]json$/,s+"/manifest.json"):base;code.textContent=url;
+function update(){
+for(const g of document.querySelectorAll(".group")){const sw=g.querySelector(".group-head .switch input");
+if(sw.hasAttribute("data-all"))sw.checked=[...g.querySelectorAll(".group-body input[data-key]")].some(i=>i.checked);
+const off=!sw.disabled&&!sw.checked;g.classList.toggle("off",off);
+for(const t of g.querySelectorAll(".toggles input"))t.disabled=off}
+const s=settings();url=s?base.replace(/manifest[.]json$/,s+"/manifest.json"):base;code.textContent=url;
 document.getElementById("install").href=url.replace(/^https?:[/][/]/,"stremio://");
 document.getElementById("web").href="https://web.stremio.com/#/addons?addon="+encodeURIComponent(url);
-for(const g of document.querySelectorAll(".group")){const sw=g.querySelector(".group-head input");
-if(sw.hasAttribute("data-all"))sw.checked=[...g.querySelectorAll(".group-body input[data-key]")].some(i=>i.checked);
-g.classList.toggle("off",!sw.disabled&&!sw.checked)}
 if(status){status.textContent=s?"Your selection":"Everything included";status.classList.toggle("custom",Boolean(s))}}
 document.addEventListener("change",e=>{const t=e.target;
 if(t.hasAttribute("data-all"))for(const i of t.closest(".group").querySelectorAll(".group-body input[data-key]"))i.checked=t.checked;update()});
