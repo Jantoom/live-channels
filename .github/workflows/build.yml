@@ -45,9 +45,6 @@ jobs:
 
       - name: Build addon
         run: node scripts/build.mjs
-        env:
-          # Read history.json from the old GitHub Pages site until the new one has its own.
-          PREVIOUS_SITE_URL: https://jantoom.github.io/live-channels
 
       # A failed test or build stops here, so the last good deployment stays up.
       - name: Deploy to Cloudflare
