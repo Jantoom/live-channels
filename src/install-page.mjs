@@ -11,12 +11,15 @@
 // and install buttons follow them:
 //   https://host/manifest.json                                  everything (the default)
 //   https://host/catalogs=storyline,other;links=/manifest.json  only what's ticked
-// Each setting is a key with the ticked values, comma-separated; settings are separated
-// by ";". A key with nothing ticked is kept, empty, so it means "none" rather than the
-// default. With everything ticked the URL is the plain one. The same page opens from
-// Stremio's Configure button (<settings>/configure) with the installed settings ticked.
+// Each setting is a key with its values, URL-encoded and comma-separated; settings are
+// separated by ";". A setting with every value ticked is left out (the addon's default:
+// everything); one with nothing ticked is kept, empty, meaning "none". An inverted
+// setting ("hide=…") lists the values left unticked instead, and is left out while
+// nothing is unticked. With everything ticked the URL is the plain one. The same page
+// opens from Stremio's Configure button (<settings>/configure) with the installed
+// settings ticked.
 
-export const KIT_VERSION = "1.3.0";
+export const KIT_VERSION = "1.4.0";
 
 // Every addon in the family. Each page's footer links to all of them except itself
 // (matched on `name`, which must equal the addon's manifest name).
@@ -30,6 +33,8 @@ const ICONS = {
   film: '<rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 3v18M17 3v18M3 7.5h4M3 12h18M3 16.5h4M17 7.5h4M17 16.5h4"/>',
   tv: '<rect x="2" y="7" width="20" height="14" rx="2"/><path d="m17 2-5 5-5-5"/>',
   stack: '<path d="m12 2 10 5-10 5L2 7z"/><path d="m2 12 10 5 10-5"/><path d="m2 17 10 5 10-5"/>',
+  link: '<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  search: '<circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>',
 };
 const COPY_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="12" height="12" rx="2"/><path d="M5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1"/></svg>';
 const CHECK_ICON = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
@@ -59,9 +64,15 @@ const esc = (s) => String(s ?? "")
  * @property {"chips"|"grid"} [layout] chips: compact pills; grid: cards with a badge
  * @property {{label: string, detail?: string, badge?: string, value?: string}[]} choices
  * @property {{key: string, value: string}} [switch] configurable: the group's switch is
- *   one value of a setting (a catalog in "catalogs"); its choices are only shown
+ *   one value of a setting (a catalog in "catalogs")
  * @property {string} [key]            configurable: each choice's `value` is a value of
- *   this setting, and the group's switch ticks or unticks them all
+ *   this setting. Without a `switch`, the group's switch ticks or unticks them all;
+ *   without a `key`, the choices are only shown
+ * @property {boolean} [invert]        the setting lists the choices left unticked
+ *   ("hide"), so it's left out of the URL while everything is ticked
+ * @property {{key: string, value: string, icon: keyof ICONS, label: string}[]} [toggles]
+ *   configurable: icon toggles beside the title, each a value of its setting, with
+ *   `label` shown on hover
  */
 export function installPage(page) {
   const { name, version, tagline, icon = "stack", manifestUrl, stats = [], groups = [], about = "", links = [], configurable = false } = page;
@@ -111,20 +122,24 @@ ${footer(name, links)}
 // switch ticks them all).
 function group(g, i, configurable = false) {
   const layout = g.layout === "grid" ? "grid" : "chips";
-  const live = configurable && (g.switch || g.key);
-  const ticks = live && g.key;
-  const input = (key, value) => (key ? `data-key="${esc(key)}" value="${esc(value)}" checked` : "checked disabled");
+  const live = configurable && Boolean(g.switch || g.key);
+  const ticks = live && Boolean(g.key);
+  const input = (key, value, invert) => (key ? `data-key="${esc(key)}" value="${esc(value)}"${invert ? " data-invert" : ""} checked` : "checked disabled");
   const choice = (c) => (live && !ticks
     ? `<span class="choice plain">`
-    : `<label class="choice${ticks ? " live" : ""}"><input type="checkbox" ${input(ticks && g.key, c.value)}><span class="tick">${CHECK_ICON}</span>`)
+    : `<label class="choice${ticks ? " live" : ""}"><input type="checkbox" ${input(ticks && g.key, c.value, g.invert)}><span class="tick">${CHECK_ICON}</span>`)
     + (c.badge ? `<span class="badge">${esc(c.badge)}</span>` : "")
     + `<span class="label">${esc(c.label)}</span>`
     + (c.detail ? `<span class="detail">${esc(c.detail)}</span>` : "")
     + (live && !ticks ? `</span>` : `</label>`);
   const toggle = !live ? "checked disabled" : g.switch ? input(g.switch.key, g.switch.value) : "checked data-all";
+  // Icon toggles beside the title, each a value of its own setting, explained on hover.
+  const toggles = configurable ? (g.toggles ?? []).map((t) => `<label class="icon-toggle" data-tip="${esc(t.label)}">`
+    + `<input type="checkbox" ${input(t.key, t.value)} aria-label="${esc(t.label)}">${iconSvg(t.icon)}</label>`).join("") : "";
   return `<div class="group" role="group" aria-labelledby="group-${i}">
     <div class="group-head"><label class="switch${live ? " live" : ""}"><input type="checkbox" role="switch" ${toggle} aria-labelledby="group-${i}"><span></span></label>`
-    + `<span class="group-title" id="group-${i}">${esc(g.title)}</span>${g.detail ? `<span class="detail">${esc(g.detail)}</span>` : ""}</div>
+    + `<span class="group-title" id="group-${i}">${esc(g.title)}</span>${toggles ? `<span class="toggles">${toggles}</span>` : ""}`
+    + `${g.detail ? `<span class="detail">${esc(g.detail)}</span>` : ""}</div>
     <div class="group-body">${g.choicesLabel ? `<p class="eyebrow">${esc(g.choicesLabel)}</p>` : ""}<div class="${layout}">${g.choices.map(choice).join("")}</div></div>
   </div>`;
 }
@@ -236,6 +251,17 @@ background:linear-gradient(135deg,var(--accent),var(--accent-2))}
 .choice.live input:focus-visible~.tick{outline:2px solid var(--accent);outline-offset:2px}
 .choice.plain{cursor:default;padding:7px 12px}
 .group.off .group-body{opacity:.45}
+.toggles{display:inline-flex;gap:6px}
+.icon-toggle{position:relative;display:inline-grid;place-items:center;width:30px;height:30px;border-radius:8px;cursor:pointer;
+color:var(--muted);background:var(--surface);border:1px solid var(--border);transition:background .15s,color .15s}
+.icon-toggle input{position:absolute;opacity:0;pointer-events:none}
+.icon-toggle svg{font-size:15px}
+.icon-toggle:has(input:checked){color:var(--accent-fg);background:var(--accent);border-color:transparent}
+.icon-toggle:has(input:focus-visible){outline:2px solid var(--accent);outline-offset:2px}
+.icon-toggle::after{content:attr(data-tip);position:absolute;z-index:2;top:calc(100% + 8px);left:50%;transform:translateX(-50%);width:max-content;max-width:240px;
+padding:6px 10px;border-radius:8px;font-size:12px;font-weight:500;line-height:1.4;text-align:center;color:var(--surface);background:var(--fg);
+opacity:0;pointer-events:none;transition:opacity .12s}
+.icon-toggle:hover::after,.icon-toggle:has(input:focus-visible)::after{opacity:1}
 .lock.custom{color:var(--accent);border-color:color-mix(in srgb,var(--accent) 40%,transparent);background:var(--accent-soft)}
 @media (max-width:480px){.page{padding-top:28px}.card{padding:16px;border-radius:16px}h1{font-size:22px}
 .url{flex-direction:column;padding:10px}.url code{padding:4px 4px 0}.copy{justify-content:center}.actions .btn{flex:1 1 100%}
@@ -254,12 +280,13 @@ const keys=[...new Set(inputs.map(i=>i.dataset.key))];
 const opened=(location.pathname.match(/([^/]+)[/]configure(?:[.]html)?[/]?$/)||[])[1]||"";
 const current=opened.includes("=")?opened:"";
 if(current){const named=new Map(decodeURIComponent(current).split(";").map(p=>{const [k,v=""]=p.split("=");return [k,new Set(v.split(",").filter(Boolean))]}));
-for(const i of inputs)if(named.has(i.dataset.key))i.checked=named.get(i.dataset.key).has(i.value)}
+for(const i of inputs)if(named.has(i.dataset.key)){const has=named.get(i.dataset.key).has(i.value);i.checked=i.hasAttribute("data-invert")?!has:has}}
 let base=new URL(code.textContent,location.href).href;
 if(current)base=base.replace("/"+current+"/manifest.json","/manifest.json");
 let url=base;
-function settings(){if(inputs.every(i=>i.checked))return "";
-return keys.map(k=>k+"="+inputs.filter(i=>i.dataset.key===k&&i.checked).map(i=>i.value).join(",")).join(";")}
+function settings(){const parts=[];for(const k of keys){const own=inputs.filter(i=>i.dataset.key===k),invert=own.some(i=>i.hasAttribute("data-invert"));
+const listed=own.filter(i=>invert?!i.checked:i.checked);if(invert?listed.length:listed.length<own.length)parts.push(k+"="+listed.map(i=>encodeURIComponent(i.value)).join(","))}
+return parts.join(";")}
 function update(){const s=settings();url=s?base.replace(/manifest[.]json$/,s+"/manifest.json"):base;code.textContent=url;
 document.getElementById("install").href=url.replace(/^https?:[/][/]/,"stremio://");
 document.getElementById("web").href="https://web.stremio.com/#/addons?addon="+encodeURIComponent(url);
